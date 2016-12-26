@@ -1,0 +1,41 @@
+# Copyright Tyler Graff 2016
+# tyler@prolaag.com
+#
+framecap: Capture and save v4l2 camera frames to multiple locations
+
+framecap is a utility that allows a user to capture frames from a v4l2 device
+and direct them to one of several locations in one or more ways. v4l2 device
+configuration such as framerate and resolution are NOT controlled by framecap;
+a separate utility must be used to configure such parameters (if desired) prior
+to running framecap.
+
+framecap is intended to allow v4l2 frames to be provided to a service such as a
+web-server for real-time viewing while simultaneously saved as a sequece of
+files for later processing. The ability to sub-sample device frames is included
+and allows a user to decrease bandwidth, storage requirements, and effective
+framerate.
+
+Usage:
+  framecap [opts] <device> <file>
+    Captures one or more frames from v4l2 device <device> and atomically writes
+    them to <file>, using options as specified in [opts].
+
+  Option: Default: Description:
+    -b             Overlay a banner containing time & date to top of frame 
+
+    -c [n]   0     Output [n] frames and then exit. n=0 outputs forever.
+
+    -j [q]   95    Output frames in JPEG format with quality [q]. Without
+                     specifying this option, frames are written in RAW format
+                     exactly as retrieved from the v4l2 device.
+
+    -m [p]   5     Motion Detect: Output captured frames only if they differ
+                     by <p> percent. 
+
+    -n [n]   1     Sub-sample by capturing only 1 of every [n] frames provided
+                     by the v4l2 device. n=1 outputs every frame.
+
+    -o             Also write each output frame to STDOUT.
+
+    -s <f>         Also write each output frame to <f>-%d where %d is a
+                     sequential decimal integer incremented each frame.
