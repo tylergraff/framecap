@@ -36,6 +36,8 @@ Usage:
                      by the v4l2 device. n=1 outputs every frame.
 
     -o             Also write each output frame to STDOUT.
-
+    -O             Also write each output frame to STDOUT in RAW format exactly
+                     as retrieved from the v4l2 device. Supercedes -o option.
+                 
     -s <f>         Also write each output frame to <f>-%d where %d is a
                      sequential decimal integer incremented each frame.
