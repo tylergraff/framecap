@@ -1,11 +1,23 @@
 // Copyright Tyler Graff 2016
-// tyler@prolaag.com
+// tagraff@gmail.com
 //
 
+typedef struct
+{
+  int banner;
+  int count;
+  int jpeg;
+  int motion;
+  int subsamp;
+  int stdoutp;
+  int stdoutp_raw;
+  char* outfile;
+  char* seqfile;
+  char* fname;
 
-
-#define MAXFRAME (4096*2160*3) // 4K max frame size in bytes
-
+  // Internal state
+  int current_frame;
+} FrameCap;
 
 
 

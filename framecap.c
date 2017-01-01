@@ -1,33 +1,16 @@
 // framecap: Capture and save v4l2 camera frames to multiple locations
 // Copyright Tyler Graff 2016
-// tyler@prolaag.com
+// tagraff@gmail.com
 //
 
-#include <sys/types.h>
-#include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "framecap.h"
 #include "libframecap.h"
-
-typedef struct
-{
-  int banner;
-  int count;
-  int jpeg;
-  int motion;
-  int subsamp;
-  int stdoutp;
-  int stdoutp_raw;
-  char* outfile;
-  char* seqfile;
-  char* fname;
-
-  // Internal state
-  int current_frame;
-} FrameCap;
 
 
 // Frame callback
@@ -127,7 +110,7 @@ int main(int argc, char **argv)
     exit(-1);
   }
 
-  framecap.outfile = argv[argc - 1];
+  framecap.outfile  = argv[argc - 1];
   framecap.fname    = argv[argc - 2];
   fprintf(stdout, "v4l2 device:   %s\n", framecap.fname);
   fprintf(stdout, "output file:   %s\n", framecap.outfile);
@@ -139,7 +122,8 @@ int main(int argc, char **argv)
   }
 
   if(framecap.seqfile)
-  {    fprintf(stdout, "seq outfile:   %s\n", framecap.seqfile);
+  {
+    fprintf(stdout, "seq outfile:   %s\n", framecap.seqfile);
     if(235 < strlen(framecap.seqfile))
     {
       fprintf(stderr, "Error: output sequence filename too long\n");
@@ -147,11 +131,8 @@ int main(int argc, char **argv)
     }
   }
 
-  if(0 > lfc_open(&lfc, framecap.fname))
-    return -1;
-
-  lfc_capture(&lfc, &framecap, on_frame);
-  lfc_close(&lfc);
+  if(0 > lfc_capture(&lfc,framecap.fname, &framecap, on_frame))
+    fprintf(stderr, "Errors occurred!\n");
 
   fprintf(stdout, "\n");
   return 0;
