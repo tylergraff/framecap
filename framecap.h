@@ -19,6 +19,12 @@ typedef struct
   int current_frame;
 } FrameCap;
 
-
-
+// YUYV422 interleaved pixel format
+typedef struct
+{
+  unsigned char y0;
+  unsigned char cb;
+  unsigned char y1;
+  unsigned char cr;
+} YuYv;
 
