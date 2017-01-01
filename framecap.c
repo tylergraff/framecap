@@ -12,12 +12,8 @@
 #include "framecap.h"
 #include "libframecap.h"
 
-// Frame callback
-int on_frame(void* ctx, char* frame, int len);
-
 typedef struct
 {
-  // From cmd-line params
   int banner;
   int count;
   int jpeg;
@@ -27,19 +23,36 @@ typedef struct
   int stdoutp_raw;
   char* outfile;
   char* seqfile;
-  char* vdev;
+  char* fname;
 
   // Internal state
   int current_frame;
-
 } FrameCap;
 
 
+// Frame callback
 int on_frame(void* ctx, char* frame, int len)
 {
-  return 0;
-}
+  FrameCap*  fc = (FrameCap*) ctx;
+  static int count = 10;
+  char       fname[255];
+  int        fp;
 
+  sprintf(fname, "%s-%d.raw", fc->outfile, count);
+  count--;
+
+  printf("%s\n", fname);
+
+  fp = open(fname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+  write(fp, frame, len);
+  fsync(fp);
+  close(fp);
+
+  if(count)
+    return 0;
+
+  return -1;
+}
 
 void usage()
 {
@@ -47,22 +60,16 @@ void usage()
   fprintf(stdout, "\n");
 }
 
-
 int main(int argc, char **argv)
 {
-  FrameCap framecap;
-  // Options, flags, parameters
-//  int bb=0, cc=0, jj=95, mm=5, nn=1, oo=0, oo_raw=0;
-//  char* outfile     = NULL;
-//  char* seq_outfile = NULL;
-//  char* vdev        = NULL;    // v4l2 device name
-
-  int   opt;
+  FrameCap    framecap;
+  LibFrameCap lfc;
+  int         opt;
 
   opterr = 0;
 
-  memset(&framecap, 0, sizeof(FrameCap));
-
+  memset(&framecap, 0, sizeof(framecap));
+  memset(&lfc, 0, sizeof(lfc));
 
   // Parse command-line options
   while((opt = getopt(argc, argv, "bc:j:m:n:oOs:")) != -1)
@@ -120,21 +127,31 @@ int main(int argc, char **argv)
     exit(-1);
   }
 
-  framecap.outfile = argv[argc - 2];
-  framecap.vdev    = argv[argc - 1];
-  fprintf(stdout, "v4l2 device:   %s\n", framecap.vdev);
+  framecap.outfile = argv[argc - 1];
+  framecap.fname    = argv[argc - 2];
+  fprintf(stdout, "v4l2 device:   %s\n", framecap.fname);
   fprintf(stdout, "output file:   %s\n", framecap.outfile);
 
+  if(235 < strlen(framecap.outfile))
+  {
+    fprintf(stderr, "Error: output filename too long\n");
+    return -1;
+  }
+
   if(framecap.seqfile)
-    fprintf(stdout, "seq outfile:   %s\n", framecap.seqfile);
+  {    fprintf(stdout, "seq outfile:   %s\n", framecap.seqfile);
+    if(235 < strlen(framecap.seqfile))
+    {
+      fprintf(stderr, "Error: output sequence filename too long\n");
+      return -1;
+    }
+  }
 
+  if(0 > lfc_open(&lfc, framecap.fname))
+    return -1;
 
-
-
-  // libframecap_init();
-  // libframecap_open();
-  // libframecap_capture();
-  // libframecap_close();
+  lfc_capture(&lfc, &framecap, on_frame);
+  lfc_close(&lfc);
 
   fprintf(stdout, "\n");
   return 0;
