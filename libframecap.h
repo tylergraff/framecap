@@ -3,10 +3,10 @@
 // Copyright 2016 Tyler Graff
 // tagraff@gmail.com
 //
-// LibFrameCap provides a simple way to capture frames from a v4l2 device.
-// Configuration such as framerate and resolution is not supported; the capture
-// device must be configured using a separate utility (like v4l2-util) before
-// using this library.
+// LibFrameCap: A header-only, no-dynamic-allocation library that provides a
+// simple API to capture frames from a v4l2 device. Configuration such as
+// framerate and resolution is NOT supported; the capture device must be
+// configured using a separate utility (like v4l2-util) beforehand.
 //
 // To use LibFrameCap:
 // 1.) #include this file ("libframecap.h")
@@ -19,10 +19,10 @@
 //
 // 3.) Calling the following function will result in your_frame_handler() being
 //     called every time a frame is captured by the device:
-//     lfc_capture(char* fname, void* usr, OnFrame cb)
+//     lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
 //      <fname> is the v4l2 device name
 //      <usr>   is a pointer to your state struct
-//      <cb>    is a pointer to your frame-handler function
+//      <fh>    is a pointer to your frame-handler function
 //
 //     lfc_capture() will return when in the following circumstances:
 //       a.) Your frame-handler returns a nonzero value
@@ -33,9 +33,10 @@
 // be threadsafe.
 //
 // ---------------------------------------------------------------------------
+#ifndef LFC_GUARD
+#define LFC_GUARD
 
 #include <stdio.h>
-#include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -44,61 +45,34 @@
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
 
-typedef int (*OnFrame)(void*,char*,int);
+// Number of memory-mapped framebuffers to use. Minimum is 1. 2 or more allows
+// v4l2 driver to buffer frames while a frame is being processed by your
+// handler. Increasing this number will let the driver store more frames at a
+// time, but this will not affect steady-state frame throughput.
+#define LFC_FBUFS (2)
 
-struct buf {
-  void*  start;
-  size_t len;
-};
+// Control printing of LibFrameCap's error messages to stderr.
+// 0: do not print any messages
+// 1: print all messages
+#define LFC_VERBOSE (1)
 
-typedef struct
-{
-  struct buf fbuf[2];
-  OnFrame    on_frame;
-  char*      fname;
-  int        fd;
-  int        isv4l2;
-  void*      usr;
-} LibFrameCap;
 
-static int lfc_ioctl(int fd, int request, void *arg)
+// Frame Handler Function Prototype
+typedef int (*LFC_FrameHandler)(void*,char*,int);
+
+
+// Wrap ioctl() with an automatic retry on EINTR
+static int lfc_ioctl(int fd, int req, void *arg)
 {
   int r;
-  do {
-    r = ioctl(fd, request, arg);
-  } while (-1 == r && EINTR == errno);
-
+  while(r = ioctl(fd, req, arg), r == -1 && EINTR == errno);
   return r;
-}
-
-static int lfc_exit(LibFrameCap* lfc, char* error)
-{
-  enum v4l2_buf_type type;
-  int                ii;
-
-  if(error)
-    fprintf(stderr, "%s\n", error);
-
-  // Stop capturing
-  type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  lfc_ioctl(lfc->fd, VIDIOC_STREAMOFF, &type);
-
-  // un-mmap() buffers
-  for (ii = 0; ii < 2; ii++)
-  {
-    munmap(lfc->fbuf[ii].start, lfc->fbuf[ii].len);
-    lfc->fbuf[ii].start = NULL;
-  }
-  // Close v4l2 device
-  close(lfc->fd);
-
-  return -1;
 }
 
 // Initialize libframecap with a user-supplied function pointer to call on
 // every frame and a user context pointer to pass in to that function
 // Start capture loop. Returns when error occurs, or user-callback returns != 0
-static int lfc_capture(LibFrameCap* lfc, char* fname, void* usr, OnFrame cb)
+static int lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
 {
   struct v4l2_capability     cap;
   struct v4l2_cropcap        cropcap;
@@ -107,40 +81,41 @@ static int lfc_capture(LibFrameCap* lfc, char* fname, void* usr, OnFrame cb)
   struct v4l2_requestbuffers req;
   struct v4l2_buffer         buf;
   enum   v4l2_buf_type       type;
-  struct timeval             timeout;
-  fd_set                     fds;
-  int                        ii, min, r;
+  struct timeval timeout;
+  void*  fbuf[LFC_FBUFS];  // frame buffer
+  int    flen[LFC_FBUFS];  // frame length
+  char*  errmsg;
+  int    fd, ii, min, r;
+  fd_set fds;
 
-  lfc->fd = 0;
-  lfc->fbuf[0].start = NULL;
-
-  lfc->fd = open(fname, O_RDWR | O_NONBLOCK, 0);
-  if(lfc->fd < 0)
-    return lfc_exit(lfc, "Error: Cannot open device");
+  fd = open(fname, O_RDWR | O_NONBLOCK, 0);
+  if(fd < 0)
+    {errmsg = "Error: Cannot open device"; goto lfc_exit;}
 
   // Determine if fd is a V4L2 Device
-  if(0 != lfc_ioctl(lfc->fd, VIDIOC_QUERYCAP, &cap))
-    return lfc_exit(lfc, "Error: device is not v4l2 compatible");
+  if(0 != lfc_ioctl(fd, VIDIOC_QUERYCAP, &cap))
+    {errmsg = "Error: device is not v4l2 compatible"; goto lfc_exit;}
+
 
   if(!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
-    return lfc_exit(lfc, "Error: Device does not support video capture");
+    {errmsg = "Error: Device does not support video capture"; goto lfc_exit;}
 
   if(!(cap.capabilities & V4L2_CAP_STREAMING))
-    return lfc_exit(lfc, "Error: Device does not support streaming IO");
+   { errmsg = "Error: Device does not support streaming IO"; goto lfc_exit;}
 
   // Set crop, ignore ioctl errors
-  memset(&cropcap, 0, sizeof(cropcap));
+  cropcap = (struct v4l2_cropcap){0};
   cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  lfc_ioctl(lfc->fd, VIDIOC_CROPCAP, &cropcap);
+  lfc_ioctl(fd, VIDIOC_CROPCAP, &cropcap);
   crop.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   crop.c    = cropcap.defrect; // reset to default
-  lfc_ioctl(lfc->fd, VIDIOC_S_CROP, &crop);
+  lfc_ioctl(fd, VIDIOC_S_CROP, &crop);
 
   // Preserve original settings as set by v4l2-ctl for example
-  memset(&fmt, 0, sizeof(fmt));
+  fmt = (struct v4l2_format){0};
   fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if(-1 == lfc_ioctl(lfc->fd, VIDIOC_G_FMT, &fmt))
-    return lfc_exit(lfc, "Error: VIDIOC_G_FMT");
+  if(-1 == lfc_ioctl(fd, VIDIOC_G_FMT, &fmt))
+   {errmsg = "Error: VIDIOC_G_FMT"; goto lfc_exit;}
 
   // Buggy driver paranoia
   min = fmt.fmt.pix.width * 2;
@@ -150,95 +125,110 @@ static int lfc_capture(LibFrameCap* lfc, char* fname, void* usr, OnFrame cb)
   if(fmt.fmt.pix.sizeimage < min)
     fmt.fmt.pix.sizeimage = min;
 
-  // Request 4 mmap'd buffers
-  memset(&req, 0, sizeof(req));
-  req.count  = 2;
+  // Request memory-mapped buffers
+  req = (struct v4l2_requestbuffers){0};
+  req.count  = LFC_FBUFS;
   req.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   req.memory = V4L2_MEMORY_MMAP;
-  if(-1 == lfc_ioctl(lfc->fd, VIDIOC_REQBUFS, &req))
-    return lfc_exit(lfc, "Error: %s does not support mmap");
+  if(-1 == lfc_ioctl(fd, VIDIOC_REQBUFS, &req))
+    {errmsg = "Error: %s does not support mmap"; goto lfc_exit;}
 
-  // Error if we didn't get 2 buffers
-  if(req.count < 2)
-    return lfc_exit(lfc, "Error: Insufficient device buffer memory");
+  if(req.count != LFC_FBUFS)
+    {errmsg = "Error: Device buffer count mismatch"; goto lfc_exit;}
 
   // mmap() the buffers into userspace memory
-  for (ii = 0 ; ii < req.count; ii++)
+  for (ii = 0 ; ii < LFC_FBUFS; ii++)
   {
-    memset(&buf, 0, sizeof(buf));
+    buf = (struct v4l2_buffer){0};
     buf.type    = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory  = V4L2_MEMORY_MMAP;
     buf.index   = ii;
-    if(-1 == lfc_ioctl(lfc->fd, VIDIOC_QUERYBUF, &buf))
-      return lfc_exit(lfc, "Error: VIDIOC_QUERYBUF");
+    if(-1 == lfc_ioctl(fd, VIDIOC_QUERYBUF, &buf))
+      {errmsg = "Error: VIDIOC_QUERYBUF"; goto lfc_exit;}
 
-    lfc->fbuf[ii].len = buf.length;
-    lfc->fbuf[ii].start = mmap(NULL, buf.length,
-      PROT_READ | PROT_WRITE, MAP_SHARED, lfc->fd, buf.m.offset);
-    if(MAP_FAILED == lfc->fbuf[ii].start)
-      return lfc_exit(lfc, "Error: Failed to map device frame buffers");
-  }
+    flen[ii] = buf.length;
+    fbuf[ii] = mmap(NULL, buf.length,
+      PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset);
+    if(MAP_FAILED == fbuf[ii])
+      {errmsg = "Error: Failed to map device frame buffers"; goto lfc_exit;}
 
-  // Set up buffers
-  for (ii = 0; ii < 2; ii++)
-  {
-    memset(&buf, 0, sizeof(buf));
+    // Set up buffers
+    buf = (struct v4l2_buffer){0};
     buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
     buf.index  = ii;
 
-    if (-1 == lfc_ioctl(lfc->fd, VIDIOC_QBUF, &buf))
-      return lfc_exit(lfc, "Error: VIDIOC_QBUF");
+    if (-1 == lfc_ioctl(fd, VIDIOC_QBUF, &buf))
+      {errmsg = "Error: VIDIOC_QBUF"; goto lfc_exit;}
   }
 
   // Start capturing
   type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (-1 == lfc_ioctl(lfc->fd, VIDIOC_STREAMON, &type))
-    return lfc_exit(lfc, "Error: VIDIOC_STREAMON");
+  if (-1 == lfc_ioctl(fd, VIDIOC_STREAMON, &type))
+    {errmsg = "Error: VIDIOC_STREAMON"; goto lfc_exit;}
 
+  // Frame Capture Loop
   for (;;)
   {
     FD_ZERO(&fds);
-    FD_SET(lfc->fd, &fds);
+    FD_SET(fd, &fds);
     timeout.tv_sec  = 60;
     timeout.tv_usec = 0;
 
-    r = select(lfc->fd + 1, &fds, NULL, NULL, &timeout);
+    r = select(fd + 1, &fds, NULL, NULL, &timeout);
     if (-1 == r)
     {
       if (EINTR == errno)
         continue;
-      return lfc_exit(lfc, "Error: select returned error");
+      {errmsg = "Error: select returned error"; goto lfc_exit;}
     }
-    if (0 == r)
-    {
+    if (0 == r && LFC_VERBOSE)
       fprintf(stderr, "Warning: Timeout (60s) waiting for frame\n");
-      continue;
-    }
 
-    memset(&buf, 0, sizeof(buf));
+    buf = (struct v4l2_buffer){0};
     buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
-    if (-1 == lfc_ioctl(lfc->fd, VIDIOC_DQBUF, &buf))
+    if (-1 == lfc_ioctl(fd, VIDIOC_DQBUF, &buf))
     {
       if(EAGAIN == errno)
         continue;
-      return lfc_exit(lfc, "Error: VIDIOC_DQBUF");
+      {errmsg = "Error: VIDIOC_DQBUF"; goto lfc_exit;}
     }
 
-    if(buf.index > 2)
-      return lfc_exit(lfc, "Error: driver buffer index out of bounds");
+    if(buf.index > LFC_FBUFS)
+      {errmsg = "Error: driver buffer index out of bounds"; goto lfc_exit;}
 
-    // user callback returns nonzero to break capture loop
-    if(cb)
-      if(cb(usr, lfc->fbuf[buf.index].start, buf.bytesused))
+    // user callback must return nonzero to break capture loop
+    if(fh)
+      if(fh(usr, fbuf[buf.index], buf.bytesused))
         break;
 
     // Set up for next frame
-    if (-1 == lfc_ioctl(lfc->fd, VIDIOC_QBUF, &buf))
-      return lfc_exit(lfc, "Error: VIDIOC_QBUF");
+    if (-1 == lfc_ioctl(fd, VIDIOC_QBUF, &buf))
+      {errmsg = "Error: VIDIOC_QBUF"; goto lfc_exit;}
   }
 
-  lfc_exit(lfc, NULL); // simply close everything
+  errmsg = NULL;
+  // falls through to lfc_exit
+lfc_exit:
+  if(errmsg && LFC_VERBOSE)
+    fprintf(stderr, "%s\n", errmsg);
+
+  // Stop capturing
+  type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  lfc_ioctl(fd, VIDIOC_STREAMOFF, &type);
+
+  // un-mmap() buffers
+  for (ii = 0; ii < LFC_FBUFS; ii++)
+    munmap(fbuf[ii], flen[ii]);
+
+  // Close v4l2 device
+  close(fd);
+
+  if(errmsg)
+    return -1;
+
   return 0;
 }
+
+#endif // LFC_GUARD
