@@ -23,7 +23,7 @@
 // npix is number of pixels in the image
 void yuyv422_to_rgb(unsigned char* rgb, unsigned char* yuyv, int npix)
 {
-  int ii, jj, r, g, b, y1, y2, u, v;
+  int ii, jj, y1, y2, u, v;
 
   // every 8 bytes of YUYV422 represents 4 pixels
   // every 3 bytes of RGB represents 1 pixel
@@ -31,63 +31,70 @@ void yuyv422_to_rgb(unsigned char* rgb, unsigned char* yuyv, int npix)
   // and convert 2 pixels per iteration
   for (ii = 0, jj = 0; ii < npix*3; ii += 6, jj += 4)
   {
-    y1 = (unsigned char)yuyv[jj];
-    u  = (unsigned char)yuyv[jj+1];
-    y2 = (unsigned char)yuyv[jj+2];
-    v  = (unsigned char)yuyv[jj+3];
-
-    r = fmax(0, fmin(255, 1.164*(y1 - 16) + 1.596*(u - 128)));
-    g = fmax(0, fmin(255, 1.164*(y1 - 16) - 0.813*(u - 128) - 0.391*(v - 128)));
-    b = fmax(0, fmin(255, 1.164*(y1 - 16) + 2.018*(u - 128)));
-
-    rgb[ii]   = r;
-    rgb[ii+1] = g;
-    rgb[ii+2] = b;
-
-    r = fmax(0, fmin(255, 1.164*(y2 - 16) + 1.596*(u - 128)));
-    g = fmax(0, fmin(255, 1.164*(y2 - 16) - 0.813*(u - 128) - 0.391*(v - 128)));
-    b = fmax(0, fmin(255, 1.164*(y2 - 16) + 2.018*(u - 128)));
-
-    rgb[ii+3] = r;
-    rgb[ii+4] = g;
-    rgb[ii+5] = b;
+    y1 = ((unsigned char)yuyv[jj]) - 16;
+    u  = ((unsigned char)yuyv[jj+1]) - 128;
+    y2 = ((unsigned char)yuyv[jj+2]) - 16;
+    v  = ((unsigned char)yuyv[jj+3]) - 128;
+    rgb[ii]   = fmax(0, fmin(255, 1.164*y1 + 1.596*u));
+    rgb[ii+1] = fmax(0, fmin(255, 1.164*y1 - 0.813*u - 0.391*v));
+    rgb[ii+2] = fmax(0, fmin(255, 1.164*y1 + 2.018*u));
+    rgb[ii+3] = fmax(0, fmin(255, 1.164*y2 + 1.596*u));
+    rgb[ii+4] = fmax(0, fmin(255, 1.164*y2 - 0.813*u - 0.391*v));
+    rgb[ii+5] = fmax(0, fmin(255, 1.164*y2 + 2.018*u));
   }
 }
 
 
-// Frame callback
-int on_frame(void* ctx, char* frame, int len)
+// Frame handler
+int on_frame(void* ctx, char* frame, int len, int w_pix, int h_pix)
 {
   FrameCap*      fc = (FrameCap*) ctx;
-  static int     count = 0;
+  static size_t  framecount = 0, capcount = 0;
   unsigned char* rgb;
-  char           fname[255];
+  char           tmpname[255];
   int            fp, npix;
 
-  // Write out raw image to file
-  sprintf(fname, "%s-%06d.raw", fc->outfile, count);
-  printf("%s\n", fname);
-  fp = open(fname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
-  write(fp, frame, len);
-  fsync(fp);
-  close(fp);
+  // subsample frames
+  framecount++;
+  if(0 != framecount % fc->subsamp)
+    return 0;
 
+  sprintf(tmpname, "%s.tmp", fc->outfile);
 
-  // YUYV422 stores 4px in 8 bytes, rgb stores 1px in 3 bytes
-  npix = len / 2;
-  rgb = (unsigned char*) malloc(npix * 3);
-  if(!rgb)
-    return -1;
+  // Write image to temp file. Determine if format should be RAW or jpeg.
+  // If fewer than 1 byte per pixel, assume that the frame is already in
+  // jpeg format and write that directly to file
+  npix = w_pix * h_pix;
+  if(!fc->jpeg || npix > len)
+  {
+    fp = open(tmpname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+    write(fp, frame, len);
+    fsync(fp);
+    close(fp);
+  }
+  else // Need to compress it ourselves
+  {
+    // Convert raw RGB image to jpeg & write to file
+    // YUYV422 stores 4px in 8 bytes, rgb stores 1px in 3 bytes
+    // Crude way to determine if YUYV422 format is used
+    rgb = (unsigned char*) malloc(npix * 3);
+    tje_encode_to_file_at_quality(tmpname, fc->jpeg, w_pix, h_pix, 3, rgb);
+    free(rgb);
+  }
 
-  yuyv422_to_rgb(rgb, (unsigned char*)frame, npix);
+  // Atomically move temp file to output file
+  rename(tmpname, fc->outfile);
 
-  // Convert raw RGB image to jpg & write to file
-  sprintf(fname, "%s-%06d.jpg", fc->outfile, count);
-  tje_encode_to_file_at_quality(fname, 3, 1280, 720, 3, rgb);
+  // Write RAW frame to stdout if instructed
+  if(fc->stdoutp)
+    write(STDOUT_FILENO, frame, len);
 
-  count++;
+  // Write sequence files if instructed
 
-  if(count == 1)
+  // Only capture up to framecap->count frames
+  // unless framecap->count is 0, in which case capture forever
+  capcount++;
+  if(capcount == fc->count && fc->count > 0)
     return -1;
 
   return 0;
@@ -96,7 +103,7 @@ int on_frame(void* ctx, char* frame, int len)
 void usage()
 {
   fprintf(stderr, "Usage: framecap [opts] <device> <fname>\n");
-  fprintf(stdout, "\n");
+  fprintf(stderr, "\n");
 }
 
 int main(int argc, char **argv)
@@ -107,48 +114,56 @@ int main(int argc, char **argv)
   opterr = 0;
   memset(&framecap, 0, sizeof(framecap));
 
+  // Set defaults
+  framecap.subsamp = 1; // sub-sampling modulus
+  framecap.count   = 0; // number of frames to capture, 0 for forever
+  framecap.jpeg    = 0; // default to RAW format
+
   // Parse command-line options
-  while((opt = getopt(argc, argv, "bc:j:m:n:oOs:")) != -1)
+  while((opt = getopt(argc, argv, "bc:j:m:n:os:")) != -1)
   {
     switch (opt) {
-    case 'b':
-      framecap.banner = 1;
-      printf("banner\n");
-      break;
+//    case 'b':
+//      framecap.banner = 1;
+//      fprintf(stderr, "banner\n");
+//      break;
 
     case 'c':
       framecap.count = atoi(optarg);
-      printf("count: %d\n", framecap.count);
+      if(framecap.count < 0)
+        framecap.count = 0;
+      fprintf(stderr, "count: %d\n", framecap.count);
       break;
 
     case 'j':
       framecap.jpeg = atoi(optarg);
-      printf("jpeg quality: %d\n", framecap.jpeg);
+      if(framecap.jpeg < 0)
+        framecap.jpeg = 1;
+      if(framecap.jpeg > 3)
+        framecap.jpeg = 3;
+      fprintf(stderr, "jpeg quality: %d\n", framecap.jpeg);
       break;
 
-    case 'm':
-      framecap.motion = atoi(optarg);
-      printf("motion percent: %d\n", framecap.motion);
-      break;
+//    case 'm':
+//      framecap.motion = atoi(optarg);
+//      printf("motion percent: %d\n", framecap.motion);
+//      break;
 
     case 'n':
       framecap.subsamp = atoi(optarg);
-      printf("sub-sample every: %d\n", framecap.subsamp);
+      if(framecap.subsamp < 1)
+        framecap.subsamp = 1;
+      fprintf(stderr, "sub-sample every: %d frames\n", framecap.subsamp);
       break;
 
     case 'o':
-      printf("output to STDOUT\n");
+      fprintf(stderr, "output raw frame to STDOUT\n");
       framecap.stdoutp = 1;
-      break;
-
-    case 'O':
-      printf("output to STDOUT in RAW format\n");
-      framecap.stdoutp_raw = 1;
       break;
 
     case 's':
       framecap.seqfile = optarg;
-      printf("sequential output to: %s\n", framecap.seqfile);
+      fprintf(stderr, "sequential output to: %s\n", framecap.seqfile);
       break;
 
     default:
@@ -165,8 +180,8 @@ int main(int argc, char **argv)
 
   framecap.outfile  = argv[argc - 1];
   framecap.fname    = argv[argc - 2];
-  fprintf(stdout, "v4l2 device:   %s\n", framecap.fname);
-  fprintf(stdout, "output file:   %s\n", framecap.outfile);
+  fprintf(stderr, "v4l2 device:   %s\n", framecap.fname);
+  fprintf(stderr, "output file:   %s\n", framecap.outfile);
 
   if(235 < strlen(framecap.outfile))
   {
@@ -176,7 +191,7 @@ int main(int argc, char **argv)
 
   if(framecap.seqfile)
   {
-    fprintf(stdout, "seq outfile:   %s\n", framecap.seqfile);
+    fprintf(stderr, "seq outfile:   %s\n", framecap.seqfile);
     if(235 < strlen(framecap.seqfile))
     {
       fprintf(stderr, "Error: output sequence filename too long\n");
@@ -187,6 +202,6 @@ int main(int argc, char **argv)
   if(0 > lfc_capture(framecap.fname, &framecap, on_frame))
     fprintf(stderr, "Errors occurred!\n");
 
-  fprintf(stdout, "\n");
+  fprintf(stderr, "\n");
   return 0;
 }

@@ -12,12 +12,13 @@
 // 1.) #include this file ("libframecap.h")
 //
 // 2.) Define a function to handle frames as they are captured. Prototype is:
-//     int your_frame_handler(void* usr, char* frame, int len)
+//     int your_handler(void* usr, char* frame, int len, int w_pix, int h_pix)
 //      <usr>   is a pointer to a struct that holds your state
 //      <frame> is whatever frame data was returned by the camera
 //      <len>   is the length of the frame in bytes
-//
-// 3.) Calling the following function will result in your_frame_handler() being
+//      <w_pix> is the number of pixels the frame is wide
+//      <h_pix> is the number of pixels the frame is high
+// 3.) Calling the following function will result in your_handler() being
 //     called every time a frame is captured by the device:
 //     lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
 //      <fname> is the v4l2 device name
@@ -58,7 +59,7 @@
 
 
 // Frame Handler Function Prototype
-typedef int (*LFC_FrameHandler)(void*,char*,int);
+typedef int (*LFC_FrameHandler)(void*,char*,int,int,int);
 
 
 // Wrap ioctl() with an automatic retry on EINTR
@@ -85,7 +86,7 @@ static int lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
   void*  fbuf[LFC_FBUFS];  // frame buffer
   int    flen[LFC_FBUFS];  // frame length
   char*  errmsg;
-  int    fd, ii, min, r;
+  int    fd, ii, min, r, w_pix, h_pix;
   fd_set fds;
 
   fd = open(fname, O_RDWR | O_NONBLOCK, 0);
@@ -124,6 +125,10 @@ static int lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
   min = fmt.fmt.pix.bytesperline * fmt.fmt.pix.height;
   if(fmt.fmt.pix.sizeimage < min)
     fmt.fmt.pix.sizeimage = min;
+
+  // Store off image resolution to pass to callback
+  w_pix = fmt.fmt.pix.width;
+  h_pix = fmt.fmt.pix.height;
 
   // Request memory-mapped buffers
   req = (struct v4l2_requestbuffers){0};
@@ -200,7 +205,7 @@ static int lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
 
     // user callback must return nonzero to break capture loop
     if(fh)
-      if(fh(usr, fbuf[buf.index], buf.bytesused))
+      if(fh(usr, fbuf[buf.index], buf.bytesused, w_pix, h_pix))
         break;
 
     // Set up for next frame
