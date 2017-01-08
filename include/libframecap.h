@@ -41,6 +41,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 #include <sys/select.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
@@ -266,8 +267,15 @@ lfc_exit:
 // Wrap ioctl() to spin on EINTR
 static int lfc_ioctl(int fd, int req, void* arg)
 {
+  struct timespec poll_time;
   int r;
-  while(r = ioctl(fd, req, arg), r == -1 && EINTR == errno);
+  while(r = ioctl(fd, req, arg), r == -1 && EINTR == errno)
+  {
+    // 10 milliseconds
+    poll_time.tv_sec = 0;
+    poll_time.tv_nsec = 10000000;
+    nanosleep(&poll_time, NULL);
+  }
   return r;
 }
 
