@@ -1,169 +1,297 @@
-// framecap: Capture and save v4l2 camera frames to multiple locations
-// Copyright Tyler Graff 2016
-// tagraff@gmail.com
+// framecap.c
+// Capture and save v4l2 camera frames to multiple locations
+// Author: Tyler Graff, 2017
+// tyler@graff.com
 //
+// MIT License
+// Copyright (c) Tyler Graff 2017
+// tyler@graff.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <sys/stat.h>
-#include "framecap.h"
-#include "libframecap.h"
 
-// For JPEG encoding
+#include "include/framecap.h"
+#include "include/libframecap.h"
+#include "include/tg_yuyv.h"
+
+#include <time.h>
+
 #define TJE_IMPLEMENTATION
-#include "tiny_jpeg.h"
+#include "include/tiny_jpeg.h"
 
-
-// (Crudely) convert YUYV422 to RGB:
-// npix is number of pixels in the image
-void yuyv422_to_rgb(unsigned char* rgb, unsigned char* yuyv, int npix)
+void usage()
 {
-  int ii, jj, y1, y2, u, v;
+  fprintf(stderr, "framecap: Capture v4l2 device frames                      \n"
+"                                                                            \n"
+"Usage:                                                                      \n"
+" framecap [opts] <device> [file]                                            \n"
+"  Capture one or more frames from v4l2 device <device>,                     \n"
+"  write them to [file] (if specified), using options specified in [opts]    \n"
+"                                                                            \n"
+"  Default options are: -c 0 -n 1                                            \n"
+"                                                                            \n"
+"Option:          Description:                                               \n"
+"  -b <str>       Print banner text <str> to top-left of frame               \n"
+"                                                                            \n"
+"  -c [int]       Output [n] frames and then exit. Use -c 0 to output forever\n"
+"                                                                            \n"
+"  -f <file>      _Atomically_ write frames to <file> by first writing them  \n"
+"                 to <file>.tmp, and the renaming that to <file>. This allows\n"
+"                 other programs to concurrently read <file> safely          \n"
+"                                                                            \n"
+"  -j [1-3]       If v4l2 device is configured to produce YUYV format frames,\n"
+"                 this option can compress those frames into JPEG format at  \n"
+"                 quality 1(smallest filesize), 2, or 3                      \n"
+"                                                                            \n"
+"  -n [n]         Sub-sample by capturing only 1 of every [n] frames provided\n"
+"                 by the v4l2 device. n=1 outputs every frame                \n"
+"                                                                            \n"
+"  -o             Also write each output frame to STDOUT                     \n"
+"                                                                            \n"
+"  -s <file>      Also write each output frame to <f>-<d> where <d> is a     \n"
+"                 sequential decimal integer incremented each frame          \n"
+"                                                                            \n"
+"Copyright 2017 Tyler Graff                                                  \n"
+"tyler@graff.com                                                           \n");
+}
 
-  // every 8 bytes of YUYV422 represents 4 pixels
-  // every 3 bytes of RGB represents 1 pixel
-  // traverse YUYV422 array 4 bytes at a time and RGB array 6 bytes at a time,
-  // and convert 2 pixels per iteration
-  for (ii = 0, jj = 0; ii < npix*3; ii += 6, jj += 4)
-  {
-    y1 = ((unsigned char)yuyv[jj]) - 16;
-    u  = ((unsigned char)yuyv[jj+1]) - 128;
-    y2 = ((unsigned char)yuyv[jj+2]) - 16;
-    v  = ((unsigned char)yuyv[jj+3]) - 128;
-    rgb[ii]   = fmax(0, fmin(255, 1.164*y1 + 1.596*u));
-    rgb[ii+1] = fmax(0, fmin(255, 1.164*y1 - 0.813*u - 0.391*v));
-    rgb[ii+2] = fmax(0, fmin(255, 1.164*y1 + 2.018*u));
-    rgb[ii+3] = fmax(0, fmin(255, 1.164*y2 + 1.596*u));
-    rgb[ii+4] = fmax(0, fmin(255, 1.164*y2 - 0.813*u - 0.391*v));
-    rgb[ii+5] = fmax(0, fmin(255, 1.164*y2 + 2.018*u));
-  }
+// callback for tiny_jpeg that receives "chunks" of jpeg data and copies them
+// to a contiguous buffer
+static void
+jpeg_handler(void* ctx, void* data, int size)
+{
+  ImgBuf*        jb = (ImgBuf*) ctx;
+  unsigned char* tmp;
+
+    // Allocate a new buffer to hold the next jpeg file chunk
+    tmp = (unsigned char*) malloc(jb->len + size);
+    if(!tmp)
+      return;
+
+    memcpy(tmp, jb->buf, jb->len); // copy previous buffer
+    memcpy(&(tmp[jb->len]), data, size); // copy new chunk
+    if(jb->buf)
+      free(jb->buf);
+    jb->buf = tmp;
+    jb->len = jb->len + size;
+    jb->fre = 1; // flag for freeing after use
 }
 
 
-// Frame handler
-int on_frame(void* ctx, char* frame, int len, int w_pix, int h_pix)
+// Callback for LibFrameCap, processes frames & saves them according to
+// command line options
+static int
+on_frame(void* ctx, unsigned char* frame, int len, int w, int h, int fmt)
 {
-  FrameCap*      fc = (FrameCap*) ctx;
-  static size_t  framecount = 0, capcount = 0;
+  FrameCap*      fc;
+  ImgBuf         img_buf;
+  time_t         ltime;
   unsigned char* rgb;
   char           tmpname[255];
-  int            fp, npix;
+  int            fp, npix, banner_y;
 
-  // subsample frames
-  framecount++;
-  if(0 != framecount % fc->subsamp)
-    return 0;
+  // Save off references for homogenous use later
+  fc = (FrameCap*) ctx;
+  img_buf.buf = frame;
+  img_buf.len = len;
+  img_buf.fre = 0;
 
-  sprintf(tmpname, "%s.tmp", fc->outfile);
-
-  // Write image to temp file. Determine if format should be RAW or jpeg.
-  // If fewer than 1 byte per pixel, assume that the frame is already in
-  // jpeg format and write that directly to file
-  npix = w_pix * h_pix;
-  if(!fc->jpeg || npix > len)
+  // keep track of frames and subsample if selected
+  if(0 != fc->framecount % fc->subsamp)
   {
-    fp = open(tmpname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
-    write(fp, frame, len);
+    fc->framecount++;
+    return 0;
+  }
+
+  // if frame is in YUYV format, add banner if selected
+  banner_y = 0;
+  if(fc->banner && fmt == V4L2_PIX_FMT_YUYV)
+  {
+    tg_yuyv_putstr(img_buf.buf, w, h, fc->banner, 0, banner_y);
+    banner_y += 8;
+  }
+
+  // if frame is in YUYV format, add timestamp if selected
+  if(fc->tstamp && fmt == V4L2_PIX_FMT_YUYV)
+  {
+    ltime  = time(NULL);
+    tg_yuyv_putstr(img_buf.buf,w,h,asctime(localtime(&ltime)), 0, banner_y);
+  }
+
+  // Write RAW frame to stdout if selected
+  if(fc->stdoutp)
+    write(STDOUT_FILENO, img_buf.buf, img_buf.len);
+
+  // If frame is in YUYV format, convert to JPEG if selected
+  if(fc->jpeg)
+  {
+    if(fmt == V4L2_PIX_FMT_YUYV)
+    {
+      npix = w * h;
+      rgb = (unsigned char*) malloc(npix * 3);
+      yuyv_to_rgb(rgb, img_buf.buf, npix);
+
+      // This referece will be now used to hold resulting jpeg image
+      img_buf.buf = NULL;
+      img_buf.len = 0;
+      img_buf.fre = 0;
+
+      // jpeg_handler() callback mallocs fc->frame and copies jpeg to it
+      tje_encode_with_func(jpeg_handler, &img_buf, fc->jpeg, w, h, 3, rgb);
+      free(rgb);
+    }
+    else
+    { fprintf(stderr, "Cannot convert frame format to JPEG\n"); return -1; }
+  }
+
+  // Write frame to temp file, then atomically rename to output file
+  // if selected
+  if(fc->outfile)
+  {
+    sprintf(tmpname, "%s.tmp", fc->outfile);
+    fp = open(tmpname, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    if(fp < 0)
+    {
+      fprintf(stderr, "Error opening: %s.tmp\n", fc->outfile);
+      return -1;
+    }
+    write(fp, img_buf.buf, img_buf.len);
+    fsync(fp);
+    close(fp);
+    if(-1 == rename(tmpname, fc->outfile))
+    {
+      fprintf(stderr, "Error renaming: %s.tmp to %s\n",fc->outfile,fc->outfile);
+      return -1;
+    }
+  }
+
+  // Write frame to sequence file if selected
+  if(fc->seqfile)
+  {
+    // fc->framecount counts *before* optional subsample
+    sprintf(tmpname, "%s-%06zu", fc->seqfile, fc->framecount/fc->subsamp);
+    fp = open(tmpname, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    if(fp < 0)
+    {
+      fprintf(stderr, "Error opening: %s\n", tmpname);
+      return -1;
+    }
+    write(fp, img_buf.buf, img_buf.len);
     fsync(fp);
     close(fp);
   }
-  else // Need to compress it ourselves
-  {
-    // Convert raw RGB image to jpeg & write to file
-    // YUYV422 stores 4px in 8 bytes, rgb stores 1px in 3 bytes
-    // Crude way to determine if YUYV422 format is used
-    rgb = (unsigned char*) malloc(npix * 3);
-    tje_encode_to_file_at_quality(tmpname, fc->jpeg, w_pix, h_pix, 3, rgb);
-    free(rgb);
-  }
 
-  // Atomically move temp file to output file
-  rename(tmpname, fc->outfile);
-
-  // Write RAW frame to stdout if instructed
-  if(fc->stdoutp)
-    write(STDOUT_FILENO, frame, len);
-
-  // Write sequence files if instructed
+  // free image buffer if it was allocated by jpeg compressor
+  if(img_buf.fre)
+    free(img_buf.buf);
 
   // Only capture up to framecap->count frames
   // unless framecap->count is 0, in which case capture forever
-  capcount++;
-  if(capcount == fc->count && fc->count > 0)
+  // fc->framecount counts *before* optional subsample
+  fc->framecount++;
+  if(fc->count > 0 && fc->count == fc->framecount/fc->subsamp)
     return -1;
 
   return 0;
 }
 
-void usage()
-{
-  fprintf(stderr, "Usage: framecap [opts] <device> <fname>\n");
-  fprintf(stderr, "\n");
-}
 
 int main(int argc, char **argv)
 {
   FrameCap  framecap;
-  int       opt;
+  int       opt, r;
 
   opterr = 0;
   memset(&framecap, 0, sizeof(framecap));
 
-  // Set defaults
+  // Command-line defaults
+  framecap.banner  = NULL;
+  framecap.seqfile = NULL;
+  framecap.outfile = NULL;
+
   framecap.subsamp = 1; // sub-sampling modulus
   framecap.count   = 0; // number of frames to capture, 0 for forever
   framecap.jpeg    = 0; // default to RAW format
+  framecap.tstamp  = 0;
+  framecap.stdoutp = 0;
+
+  // Internal state
+  framecap.framecount = 0;
 
   // Parse command-line options
-  while((opt = getopt(argc, argv, "bc:j:m:n:os:")) != -1)
+  while((opt = getopt(argc, argv, "b:c:f:j:m:n:os:t")) != -1)
   {
     switch (opt) {
-//    case 'b':
-//      framecap.banner = 1;
-//      fprintf(stderr, "banner\n");
-//      break;
 
+    // Print a custom banner at top-left of frame
+    case 'b':
+      framecap.banner = optarg;
+      break;
+
+    // Number of frames to capture
     case 'c':
       framecap.count = atoi(optarg);
       if(framecap.count < 0)
         framecap.count = 0;
-      fprintf(stderr, "count: %d\n", framecap.count);
       break;
 
+    // Write frames to output file
+    case 'f':
+      framecap.outfile = optarg;
+      break;
+
+    // Compress YUYV frame to jpeg
     case 'j':
       framecap.jpeg = atoi(optarg);
       if(framecap.jpeg < 0)
         framecap.jpeg = 1;
       if(framecap.jpeg > 3)
         framecap.jpeg = 3;
-      fprintf(stderr, "jpeg quality: %d\n", framecap.jpeg);
       break;
 
-//    case 'm':
-//      framecap.motion = atoi(optarg);
-//      printf("motion percent: %d\n", framecap.motion);
-//      break;
-
+    // Capture only one every <n> frames
     case 'n':
       framecap.subsamp = atoi(optarg);
       if(framecap.subsamp < 1)
         framecap.subsamp = 1;
-      fprintf(stderr, "sub-sample every: %d frames\n", framecap.subsamp);
       break;
 
+    // Output raw frame (plus optional banner and timestamp) to STDOUT
     case 'o':
-      fprintf(stderr, "output raw frame to STDOUT\n");
       framecap.stdoutp = 1;
       break;
 
+    // Write frames to a sequence of files like: %zu-<name>
     case 's':
       framecap.seqfile = optarg;
-      fprintf(stderr, "sequential output to: %s\n", framecap.seqfile);
+      break;
+
+    // Print timestamp at top-left of frame
+    case 't':
+      framecap.tstamp = 1;
       break;
 
     default:
@@ -173,35 +301,31 @@ int main(int argc, char **argv)
     }
   }
 
-  if(argc - optind != 2) {
+  if(argc - optind == 1)
+    framecap.v4l2    = argv[argc - 1];
+  else
+  {
     usage();
     exit(-1);
   }
 
-  framecap.outfile  = argv[argc - 1];
-  framecap.fname    = argv[argc - 2];
-  fprintf(stderr, "v4l2 device:   %s\n", framecap.fname);
-  fprintf(stderr, "output file:   %s\n", framecap.outfile);
-
-  if(235 < strlen(framecap.outfile))
+  if(framecap.outfile && 235 < strlen(framecap.outfile))
   {
-    fprintf(stderr, "Error: output filename too long\n");
+    fprintf(stderr, "Error: filename too long: %s\n", framecap.outfile);
     return -1;
   }
 
-  if(framecap.seqfile)
+  if(framecap.seqfile && 235 < strlen(framecap.seqfile))
   {
-    fprintf(stderr, "seq outfile:   %s\n", framecap.seqfile);
-    if(235 < strlen(framecap.seqfile))
-    {
-      fprintf(stderr, "Error: output sequence filename too long\n");
-      return -1;
-    }
+    fprintf(stderr, "Error: filename too long: %s\n", framecap.seqfile);
+    return -1;
   }
 
-  if(0 > lfc_capture(framecap.fname, &framecap, on_frame))
-    fprintf(stderr, "Errors occurred!\n");
+  // Enter frame capture loop here
+  r = lfc_capture(framecap.v4l2, &framecap, on_frame);
+  if(r < 0)
+    fprintf(stderr, "Errors occurred during capture loop!\n");
 
   fprintf(stderr, "\n");
-  return 0;
+  return r;
 }

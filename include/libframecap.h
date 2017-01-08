@@ -1,39 +1,39 @@
 // ---------------------------------------------------------------------------
-// LibFrameCap
-// Copyright 2016 Tyler Graff
-// tagraff@gmail.com
+// libframecap.h
+// Author: Tyler Graff, 2017
+// tyler@graff.com
 //
 // LibFrameCap: A header-only, no-dynamic-allocation library that provides a
-// simple API to capture frames from a v4l2 device. Configuration such as
-// framerate and resolution is NOT supported; the capture device must be
-// configured using a separate utility (like v4l2-util) beforehand.
-//
-// To use LibFrameCap:
-// 1.) #include this file ("libframecap.h")
-//
-// 2.) Define a function to handle frames as they are captured. Prototype is:
-//     int your_handler(void* usr, char* frame, int len, int w_pix, int h_pix)
-//      <usr>   is a pointer to a struct that holds your state
-//      <frame> is whatever frame data was returned by the camera
-//      <len>   is the length of the frame in bytes
-//      <w_pix> is the number of pixels the frame is wide
-//      <h_pix> is the number of pixels the frame is high
-// 3.) Calling the following function will result in your_handler() being
-//     called every time a frame is captured by the device:
-//     lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
-//      <fname> is the v4l2 device name
-//      <usr>   is a pointer to your state struct
-//      <fh>    is a pointer to your frame-handler function
-//
-//     lfc_capture() will return when in the following circumstances:
-//       a.) Your frame-handler returns a nonzero value
-//       b.) An error occurs
-//     lfc_capture() will only return a nonzero value if an error occurred.
-//
-// LibFrameCap is single-threaded, so your frame handler does not need to
-// be threadsafe.
+// simple API to capture frames from a v4l2 device. LibFrameCap does NOT provide
+// any method to configure device parameters such as framerate or resolution.
+// The device must be configured using a separate utility (like v4l2-util)
+// before LibFrameCap's capture loop is invoked.
 //
 // ---------------------------------------------------------------------------
+//
+// MIT License
+// Copyright (c) Tyler Graff 2017
+// tyler@graff.com
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+//
+
 #ifndef LFC_GUARD
 #define LFC_GUARD
 
@@ -46,33 +46,58 @@
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
 
+// ---------------------------------------------------------------------------
+// To use LibFrameCap:
+// 1.) #include this file ("libframecap.h")
+//
+// 2.) Define a function to handle frames as they are captured. Refer to
+//     "Frame Handler Function Prototype" below.
+//
+// 3.) Call lfc_capture() to invoke your handler on every frame captured by the
+//     capture device. Refer to "Capture Loop" below.
+//
+// LibFrameCap Public API:
+//
 // Number of memory-mapped framebuffers to use. Minimum is 1. 2 or more allows
-// v4l2 driver to buffer frames while a frame is being processed by your
-// handler. Increasing this number will let the driver store more frames at a
-// time, but this will not affect steady-state frame throughput.
+// driver to buffer frames while your handler is processing the current frame.
 #define LFC_FBUFS (2)
 
 // Control printing of LibFrameCap's error messages to stderr.
-// 0: do not print any messages
-// 1: print all messages
+// 0: do not print any messages, 1: print all messages
 #define LFC_VERBOSE (1)
 
+// Frame Handler Function Prototype:
+//      <usr>     pointer to a struct that holds your state
+//      <frame>   frame data as returned by the camera
+//      <len>     length of the frame in bytes
+//      <w_pix>   frame width in pixels
+//      <h_pix>   frame height in pixels
+//      <img_fmt> frame format, refer to V4L2_PIX_FMT_* in linux/videodev2.h
+//      return value: <0>       capture loop continues
+//                    <nonzero> capture loop stops and returns this value
+typedef int (*LFC_FrameHandler) (void* usr,
+                                 unsigned char* frame,
+                                 int len,
+                                 int w_pix,
+                                 int h_pix,
+                                 int img_fmt);
+// Capture Loop:
+//      <fname> v4l2 device filepath to open (eg, "/dev/video0")
+//      <usr>   pointer to your user-allocated state
+//      <fh>    pointer to your frame-handler function
+//      return value: <-1> an internal error has occurred
+//                    otherwise, returns any nonzero frame-handler return value
+static int lfc_capture(char* fname,
+                       void* usr,
+                       LFC_FrameHandler fh);
+// ---------------------------------------------------------------------------
 
-// Frame Handler Function Prototype
-typedef int (*LFC_FrameHandler)(void*,char*,int,int,int);
 
 
-// Wrap ioctl() with an automatic retry on EINTR
-static int lfc_ioctl(int fd, int req, void *arg)
-{
-  int r;
-  while(r = ioctl(fd, req, arg), r == -1 && EINTR == errno);
-  return r;
-}
+// ioctl wrapper (internal use only)
+static int lfc_ioctl(int, int, void*);
 
-// Initialize libframecap with a user-supplied function pointer to call on
-// every frame and a user context pointer to pass in to that function
-// Start capture loop. Returns when error occurs, or user-callback returns != 0
+// Capture loop. Returns -1 if error occurs, or user-callback retval if != 0.
 static int lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
 {
   struct v4l2_capability     cap;
@@ -82,11 +107,11 @@ static int lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
   struct v4l2_requestbuffers req;
   struct v4l2_buffer         buf;
   enum   v4l2_buf_type       type;
-  struct timeval timeout;
-  void*  fbuf[LFC_FBUFS];  // frame buffer
-  int    flen[LFC_FBUFS];  // frame length
+  struct timeval             timeout;
+  void*  fbuf[LFC_FBUFS];  // frame buffers
+  int    flen[LFC_FBUFS];  // buffer lengths
   char*  errmsg;
-  int    fd, ii, min, r, w_pix, h_pix;
+  int    fd, ii, min, r, w_pix, h_pix, img_fmt;
   fd_set fds;
 
   fd = open(fname, O_RDWR | O_NONBLOCK, 0);
@@ -126,9 +151,10 @@ static int lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
   if(fmt.fmt.pix.sizeimage < min)
     fmt.fmt.pix.sizeimage = min;
 
-  // Store off image resolution to pass to callback
-  w_pix = fmt.fmt.pix.width;
-  h_pix = fmt.fmt.pix.height;
+  // Store off image parameters to pass to callback
+  w_pix  = fmt.fmt.pix.width;
+  h_pix  = fmt.fmt.pix.height;
+  img_fmt = fmt.fmt.pix.pixelformat; // YUYV422, MJPEG, etc
 
   // Request memory-mapped buffers
   req = (struct v4l2_requestbuffers){0};
@@ -205,7 +231,7 @@ static int lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
 
     // user callback must return nonzero to break capture loop
     if(fh)
-      if(fh(usr, fbuf[buf.index], buf.bytesused, w_pix, h_pix))
+      if(fh(usr, fbuf[buf.index], buf.bytesused, w_pix, h_pix, img_fmt))
         break;
 
     // Set up for next frame
@@ -215,6 +241,7 @@ static int lfc_capture(char* fname, void* usr, LFC_FrameHandler fh)
 
   errmsg = NULL;
   // falls through to lfc_exit
+
 lfc_exit:
   if(errmsg && LFC_VERBOSE)
     fprintf(stderr, "%s\n", errmsg);
@@ -234,6 +261,14 @@ lfc_exit:
     return -1;
 
   return 0;
+}
+
+// Wrap ioctl() to spin on EINTR
+static int lfc_ioctl(int fd, int req, void* arg)
+{
+  int r;
+  while(r = ioctl(fd, req, arg), r == -1 && EINTR == errno);
+  return r;
 }
 
 #endif // LFC_GUARD
