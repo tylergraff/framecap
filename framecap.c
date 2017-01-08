@@ -24,6 +24,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+#define _POSIX_C_SOURCE  199309L // needed for C99
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,7 @@
 #define TJE_IMPLEMENTATION
 #include "include/tiny_jpeg.h"
 
+
 void usage()
 {
   fprintf(stderr, "framecap: Capture v4l2 device frames                      \n"
@@ -54,25 +56,30 @@ void usage()
 "  Default options are: -c 0 -n 1                                            \n"
 "                                                                            \n"
 "Option:          Description:                                               \n"
-"  -b <str>       Print banner text <str> to top-left of frame               \n"
+"  -b <str>       Print banner text <str> to top-left of frame (YUYV only)   \n"
 "                                                                            \n"
-"  -c [int]       Output [n] frames and then exit. Use -c 0 to output forever\n"
+"  -c [n]         Output [n] frames and then exit. Use -c 0 to output forever\n"
 "                                                                            \n"
 "  -f <file>      _Atomically_ write frames to <file> by first writing them  \n"
 "                 to <file>.tmp, and the renaming that to <file>. This allows\n"
 "                 other programs to concurrently read <file> safely          \n"
 "                                                                            \n"
-"  -j [1-3]       If v4l2 device is configured to produce YUYV format frames,\n"
-"                 this option can compress those frames into JPEG format at  \n"
-"                 quality 1(smallest filesize), 2, or 3                      \n"
+"  -j [1-3]       Compress frames into JPEG format at quality 1 (lowest) to  \n"
+"                 3 (highest/largest file). (YUYV only)                      \n"
 "                                                                            \n"
 "  -n [n]         Sub-sample by capturing only 1 of every [n] frames provided\n"
 "                 by the v4l2 device. n=1 outputs every frame                \n"
 "                                                                            \n"
 "  -o             Also write each output frame to STDOUT                     \n"
 "                                                                            \n"
+"  -r <n>         Capture (at most) 1 frame every <n> milliseconds. This also\n"
+"                 prevents the device from writing to its framebuffer during \n"
+"                 the delay period, which may help decrease bus bandwidth.   \n"
+"                                                                            \n"
 "  -s <file>      Also write each output frame to <f>-<d> where <d> is a     \n"
 "                 sequential decimal integer incremented each frame          \n"
+"                                                                            \n"
+"  -t             Print date/time to top-left of frame (YUYV only)           \n"
 "                                                                            \n"
 "Copyright 2017 Tyler Graff                                                  \n"
 "tyler@graff.com                                                           \n");
@@ -106,18 +113,41 @@ jpeg_handler(void* ctx, void* data, int size)
 static int
 on_frame(void* ctx, unsigned char* frame, int len, int w, int h, int fmt)
 {
-  FrameCap*      fc;
-  ImgBuf         img_buf;
-  time_t         ltime;
-  unsigned char* rgb;
-  char           tmpname[255];
-  int            fp, npix, banner_y;
+  struct timespec current_time, poll_time;
+  FrameCap*       fc;
+  ImgBuf          img_buf;
+  time_t          ltime;
+  unsigned char*  rgb;
+  size_t          elapsed_nsec;
+  char            tmpname[255];
+  int             fp, npix, banner_y;
 
   // Save off references for homogenous use later
   fc = (FrameCap*) ctx;
   img_buf.buf = frame;
   img_buf.len = len;
   img_buf.fre = 0;
+
+
+  // Check & enforce rate limit (-r option)
+  for(;;)
+  {
+    clock_gettime(CLOCK_MONOTONIC_RAW, &current_time);
+
+    elapsed_nsec = 1000000000*(current_time.tv_sec - fc->start_time.tv_sec) +
+                    (current_time.tv_nsec - fc->start_time.tv_nsec);
+
+    // Enforce rate limit
+    if((elapsed_nsec / 1000000) > fc->rate_ms)
+     break;
+
+    // 10 milliseconds
+    poll_time.tv_sec = 0;
+    poll_time.tv_nsec = 10000000;
+    nanosleep(&poll_time, NULL);
+  }
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &(fc->start_time));
 
   // keep track of frames and subsample if selected
   if(0 != fc->framecount % fc->subsamp)
@@ -143,7 +173,8 @@ on_frame(void* ctx, unsigned char* frame, int len, int w, int h, int fmt)
 
   // Write RAW frame to stdout if selected
   if(fc->stdoutp)
-    write(STDOUT_FILENO, img_buf.buf, img_buf.len);
+    if(write(STDOUT_FILENO, img_buf.buf, img_buf.len))
+      fsync(STDOUT_FILENO);
 
   // If frame is in YUYV format, convert to JPEG if selected
   if(fc->jpeg)
@@ -178,8 +209,8 @@ on_frame(void* ctx, unsigned char* frame, int len, int w, int h, int fmt)
       fprintf(stderr, "Error opening: %s.tmp\n", fc->outfile);
       return -1;
     }
-    write(fp, img_buf.buf, img_buf.len);
-    fsync(fp);
+    if(write(fp, img_buf.buf, img_buf.len))
+      fsync(fp);
     close(fp);
     if(-1 == rename(tmpname, fc->outfile))
     {
@@ -199,8 +230,8 @@ on_frame(void* ctx, unsigned char* frame, int len, int w, int h, int fmt)
       fprintf(stderr, "Error opening: %s\n", tmpname);
       return -1;
     }
-    write(fp, img_buf.buf, img_buf.len);
-    fsync(fp);
+    if(write(fp, img_buf.buf, img_buf.len))
+      fsync(fp);
     close(fp);
   }
 
@@ -237,12 +268,13 @@ int main(int argc, char **argv)
   framecap.jpeg    = 0; // default to RAW format
   framecap.tstamp  = 0;
   framecap.stdoutp = 0;
+  framecap.rate_ms = 0;
 
   // Internal state
   framecap.framecount = 0;
 
   // Parse command-line options
-  while((opt = getopt(argc, argv, "b:c:f:j:m:n:os:t")) != -1)
+  while((opt = getopt(argc, argv, "b:c:f:j:m:n:or:s:t")) != -1)
   {
     switch (opt) {
 
@@ -289,6 +321,12 @@ int main(int argc, char **argv)
       framecap.seqfile = optarg;
       break;
 
+    // Frame period in milliseconds
+    case 'r':
+      framecap.rate_ms = atoi(optarg);
+      if(framecap.rate_ms < 0)
+        framecap.rate_ms = 0;
+
     // Print timestamp at top-left of frame
     case 't':
       framecap.tstamp = 1;
@@ -320,6 +358,9 @@ int main(int argc, char **argv)
     fprintf(stderr, "Error: filename too long: %s\n", framecap.seqfile);
     return -1;
   }
+
+  // set initial timestamp before capture starts
+  clock_gettime(CLOCK_MONOTONIC_RAW, &framecap.start_time);
 
   // Enter frame capture loop here
   r = lfc_capture(framecap.v4l2, &framecap, on_frame);

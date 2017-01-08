@@ -20,6 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
+#include <time.h>
 
 typedef struct
 {
@@ -31,14 +32,16 @@ typedef struct
   int    subsamp;
   int    stdoutp;
   int    tstamp;
+  int    rate_ms;
   char*  outfile;
   char*  seqfile;
   char*  v4l2;
 
   // Internal state
-  size_t         framecount;
-  unsigned char* jpg_buf;
-  size_t         jpg_len;
+  size_t          framecount;
+  unsigned char*  jpg_buf;
+  size_t          jpg_len;
+  struct timespec start_time;
 } FrameCap;
 
 // For collecting file before writing

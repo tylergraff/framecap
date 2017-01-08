@@ -23,14 +23,17 @@ Usage:
              to <file>.tmp, and the renaming that to <file>. This allows
              other programs to concurrently read <file> safely
 
-  -j <1-3>   If device is configured to produce YUYV format frames, this
-             option can compress those frames into JPEG format at
-             quality 1 (smallest file), 2, or 3 (best image)
+  -j [1-3]   Compress frames into JPEG format at quality 1 (lowest) to
+             3 (highest/largest file). (YUYV only)
 
   -n <n>     Sub-sample by capturing only 1 of every [n] frames provided
              by the v4l2 device. n=1 outputs every frame
 
-  -o         Also write each output frame to STDOUT 
+  -o         Also write each output frame to STDOUT
+
+  -r <n>     Capture (at most) 1 frame every <n> milliseconds. This also
+             prevents the device from writing to its framebuffer during
+             the delay period, which may help decrease bus bandwidth.
 
   -s <f>     Also write each output frame to <f>-<d> where <d> is a 
              sequential decimal integer incremented each frame
