@@ -1,7 +1,7 @@
-# Copyright Tyler Graff 2017
-# tyler@graff.com 
-# 
-framecap: Capture and save v4l2 camera frames to multiple locations 
+Copyright Tyler Graff 2017
+tyler@graff.com 
+ 
+framecap: Capture, process, and save v4l2 camera frames to multiple locations 
 
 framecap captures one or more frames from a v4l2 device and allows a user to
 select one or more ways to process and output the frame. Configuration such as
