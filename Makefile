@@ -3,7 +3,7 @@ CC = gcc
 # compiler flags:
 #  -g    adds debugging information to the executable file
 #  -Wall turns on most, but not all, compiler warnings
-CFLAGS  = -g -Wall -std=c99 -lm -O2
+CFLAGS  = -g -Wall -std=c99 -lm -Ofast
 
 # the build target executable:
 TARGET = framecap

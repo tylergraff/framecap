@@ -53,25 +53,59 @@ static void tg_yuyv_putstr(unsigned char* yuyv,
 #define TG_YUYV_BACK_CRCB (0x7F)
 
 // ----------------------------------------------------------------------------
-
-#include <math.h>
-
-
-static unsigned char ycr_to_r(unsigned char y, unsigned char cr)
+static unsigned char int_ycr_to_r(unsigned char y, unsigned char cr)
 {
-  double r = fmin(255, fmax(y + (1.4065 * (cr - 128)), 0));
+  int _y = y;
+  int _cr = cr - 128;
+  int r;
+
+  // 1.403 ~= 45/32
+  r = (_y<<5) + 45*_cr;
+  if(r <= 0)
+    r = 0;
+  else if(r >= 32*255)
+    r = 255;
+  else
+    r = r >> 5; // divide-by-32
+
   return (unsigned char)r;
 }
 
-static unsigned char ycrcb_to_g(unsigned char y, unsigned char cr, unsigned char cb)
+static unsigned char int_ycrcb_to_g(unsigned char y, unsigned char cr, unsigned char cb)
 {
-  double g = fmin(255, fmax(y-(0.3455*(cb-128))-(0.7169*(cr - 128)), 0));
+  int _y = y;
+  int _cr = cr - 128;
+  int _cb = cb - 128;
+  int g;
+
+  // 0.7169 ~= 23/32
+  // 0.3455 ~= 11/32
+  g = (_y<<5) - 11*_cb - 23*_cr;
+  if(g <= 0)
+    g = 0;
+  else if(g >= 32*255)
+    g = 255;
+  else
+    g = g >> 5;
+
   return (unsigned char)g;
 }
 
-static unsigned char ycb_to_b(unsigned char y, unsigned char cb)
+static unsigned char int_ycb_to_b(unsigned char y, unsigned char cb)
 {
-  double b = fmin(255, fmax(y + (1.7790 * (cb - 128)),0));
+  int _y = y;
+  int _cb = cb - 128;
+  int b;
+
+  // 1.7790 ~= 57/32
+  b = (_y<<5) + 57*_cb;
+  if(b <= 0)
+    b = 0;
+  else if(b >= 32*255)
+    b = 255;
+  else
+    b = b >> 5; // divide-by-32
+
   return (unsigned char)b;
 }
 
@@ -87,16 +121,16 @@ static void yuyv_to_rgb(unsigned char* rgb, unsigned char* yuyv, int npix)
     cb = yuyv[jj+1];
     cr = yuyv[jj+3];
 
-    rgb[ii+0] = ycr_to_r(y, cr);
-    rgb[ii+1] = ycrcb_to_g(y, cr, cb);
-    rgb[ii+2] = ycb_to_b(y, cb);
+    rgb[ii+0] = int_ycr_to_r(y, cr);
+    rgb[ii+1] = int_ycrcb_to_g(y, cr, cb);
+    rgb[ii+2] = int_ycb_to_b(y, cb);
 
     // second pixel uses 2nd Y value
     y  = yuyv[jj+2];
 
-    rgb[ii+3] = ycr_to_r(y, cr);
-    rgb[ii+4] = ycrcb_to_g(y, cr, cb);
-    rgb[ii+5] = ycb_to_b(y, cb);
+    rgb[ii+3] = int_ycr_to_r(y, cr);
+    rgb[ii+4] = int_ycrcb_to_g(y, cr, cb);
+    rgb[ii+5] = int_ycb_to_b(y, cb);
   }
 }
 

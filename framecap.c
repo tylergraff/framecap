@@ -34,14 +34,14 @@
 #include <getopt.h>
 #include <sys/stat.h>
 
-#include "include/framecap.h"
-#include "include/libframecap.h"
-#include "include/tg_yuyv.h"
+#include "framecap.h"
+#include "lib/libframecap.h"
+#include "lib/tg_yuyv.h"
 
 #include <time.h>
 
 #define TJE_IMPLEMENTATION
-#include "include/tiny_jpeg.h"
+#include "lib/tiny_jpeg.h"
 
 
 void usage()

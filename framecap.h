@@ -40,6 +40,8 @@ typedef struct
   // Internal state
   size_t          framecount;
   unsigned char*  jpg_buf;
+  unsigned char*  prev_frame;
+  unsigned char*  diff_frame;
   size_t          jpg_len;
   struct timespec start_time;
 } FrameCap;
