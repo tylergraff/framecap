@@ -1,17 +1,17 @@
 PROJECTS = common apps
 
-.PHONY: target clean test coverage $(PROJECTS)
+.PHONY: target clean $(PROJECTS)
 
 CC = gcc
 
-
+target: $(PROJECTS)
 common:
-        cd common && $(MAKE)
+	cd common && $(MAKE)
 
 apps:
-        cd apps && $(MAKE)
+	cd apps && $(MAKE)
 
 
 clean:
-        cd common && $(MAKE) clean
-        cd apps && $(MAKE) clean
+	cd common && $(MAKE) clean
+	cd apps && $(MAKE) clean
