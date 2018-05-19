@@ -1,19 +1,19 @@
 // ---------------------------------------------------------------------------
-// libframecap.h
+// framecap.h
 // Author: Tyler Graff, 2017
-// tyler@graff.com
+// tagraff@gmail.com
 //
-// LibFrameCap: A header-only, no-dynamic-allocation library that provides a
-// simple API to capture frames from a v4l2 device. LibFrameCap does NOT provide
+// FrameCap: A no-dynamic-allocation library that provides a
+// simple API to capture frames from a v4l2 device. FrameCap does NOT provide
 // any method to configure device parameters such as framerate or resolution.
 // The device must be configured using a separate utility (like v4l2-util)
-// before LibFrameCap's capture loop is invoked.
+// before FrameCap's capture loop is invoked.
 //
 // ---------------------------------------------------------------------------
 //
 // MIT License
 // Copyright (c) Tyler Graff 2017
-// tyler@graff.com
+// tagraff@gmail.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -34,8 +34,8 @@
 // SOFTWARE.
 //
 
-#ifndef LFC_GUARD
-#define LFC_GUARD
+#ifndef FRAMECAP_GUARD
+#define FRAMECAP_GUARD
 
 #include <stdio.h>
 #include <fcntl.h>
@@ -279,4 +279,4 @@ static int lfc_ioctl(int fd, int req, void* arg)
   return r;
 }
 
-#endif // LFC_GUARD
+#endif // FRAMECAP_GUARD

@@ -1,17 +1,17 @@
+PROJECTS = common apps
+
+.PHONY: target clean test coverage $(PROJECTS)
+
 CC = gcc
 
-# compiler flags:
-#  -g    adds debugging information to the executable file
-#  -Wall turns on most, but not all, compiler warnings
-CFLAGS  = -g -Wall -std=c99 -lm -Ofast
 
-# the build target executable:
-TARGET = framecap
+common:
+        cd common && $(MAKE)
 
-all: $(TARGET)
+apps:
+        cd apps && $(MAKE)
 
-$(TARGET): $(TARGET).c
-	$(CC) $(CFLAGS) -o $(TARGET) $(TARGET).c -lm
 
 clean:
-	$(RM) $(TARGET) *.o
+        cd common && $(MAKE) clean
+        cd apps && $(MAKE) clean
