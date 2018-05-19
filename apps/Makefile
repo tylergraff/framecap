@@ -6,7 +6,7 @@ CFLAGS += -g -Wall -Wextra -std=gnu99 -pipe -ggdb3 -I. -I..
 LIBS += -lm
 CC = gcc
 
-EXTOBJS = ../lib/*.o
+EXTOBJS = ../common/*.o
 APPS = v4l2cat
 
 GCNO = $(APPS:=.gcno)

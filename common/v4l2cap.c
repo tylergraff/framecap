@@ -1,8 +1,3 @@
-// v4l2cap: A no-dynamic-allocation library that provides a
-// simple API to capture frames from a v4l2 device. The v4l2 device must be
-// previously configured using a separate utility (like v4l2-util).
-// ---------------------------------------------------------------------------
-//
 // MIT License
 // Copyright (c) Tyler Graff 2017
 // tagraff@gmail.com
@@ -41,10 +36,9 @@
 #include "v4l2cap.h"
 
 struct V4L2Cap {
-  int          fd;         // Device handle
-  unsigned int bufcnt;     // # of buffers
-  int          currentbuf; // frame buffer currently in use
-  uint8_t    **fbuf;       // frame buffers
+  int       fd;         // Device handle
+  uint32_t  bufcnt;     // # of buffers
+  uint8_t **fbuf;       // frame buffers
 };
 
 
@@ -53,8 +47,10 @@ static int v4l2cap_ioctl(int fd, int req, void* arg)
 {
   struct timespec poll_time;
   int r;
-  while(r = ioctl(fd, req, arg), r == -1 && EINTR == errno)
-  {
+  while ((r = ioctl(fd, req, arg))) {
+    if(r == -1 && (EINTR != errno && EAGAIN != errno))
+      break;
+
     // 10 milliseconds
     poll_time.tv_sec = 0;
     poll_time.tv_nsec = 10000000;
@@ -65,7 +61,7 @@ static int v4l2cap_ioctl(int fd, int req, void* arg)
 
 // Create a new context to capture frames from <fname>.
 // Returns NULL on error.
-V4L2Cap * v4l2cap_new(const char *device, int bufcnt)
+V4L2Cap * v4l2cap_new(const char *device, uint32_t bufcnt)
 {
   struct v4l2_capability     cap;
   struct v4l2_cropcap        cropcap;
@@ -82,7 +78,6 @@ V4L2Cap * v4l2cap_new(const char *device, int bufcnt)
     return NULL;
   memset(ctx, 0, sizeof(V4L2Cap));
   ctx->bufcnt = bufcnt;
-  ctx->currentbuf = -1;
   ctx->fbuf = malloc(sizeof(uint8_t*) * ctx->bufcnt);
 
   ctx->fd = open(device, O_RDWR | O_NONBLOCK, 0);
@@ -208,8 +203,8 @@ int v4l2cap_free(V4L2Cap *ctx)
 
 
 // Returns a pointer to a captured frame and its meta-data. NOT thread-safe.
-uint8_t * v4l2cap_next(V4L2Cap *ctx, int *l, int *w, int *h, int *fmt) {
-
+uint8_t * v4l2cap_next(V4L2Cap *ctx,
+                       uint32_t *l, uint32_t *w, uint32_t *h, uint32_t *ffmt) {
   struct v4l2_buffer buf;
   struct v4l2_format vfmt;
   struct timeval     timeout;
@@ -219,21 +214,15 @@ uint8_t * v4l2cap_next(V4L2Cap *ctx, int *l, int *w, int *h, int *fmt) {
   FD_ZERO(&fds);
   FD_SET(ctx->fd, &fds);
 
-  timeout.tv_sec  = 1;
+  timeout.tv_sec  = 10;
   timeout.tv_usec = 0;
 
-  for (;;) {
+  for (;r < 1;) {
     r = select(ctx->fd + 1, &fds, NULL, NULL, &timeout);
     if (0 == r)
-      return NULL;
-    if (-1 == r) {
-      if (EINTR == errno)
-        continue;
-    } else {
-      fprintf(stderr, "ERROR: select()");
-      return NULL;
-    }
-    break;
+      {fprintf(stderr, "ERROR: select timeout"); return NULL;}
+    if (-1 == r && EINTR != errno && EAGAIN != errno)
+      {fprintf(stderr, "ERROR: select() returned %d", r); return NULL;}
   }
 
   // Preserve original settings as set by v4l2-ctl for example
@@ -253,17 +242,12 @@ uint8_t * v4l2cap_next(V4L2Cap *ctx, int *l, int *w, int *h, int *fmt) {
     vfmt.fmt.pix.sizeimage = min;
 #endif
 
-  for(;;) {
-    buf = (struct v4l2_buffer){0};
-    buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    buf.memory = V4L2_MEMORY_MMAP;
-    if (-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_DQBUF, &buf)) {
-      if(EAGAIN == errno)
-        continue;
-      fprintf(stderr, "ERROR: VIDIOC_DQBUF");
-      return NULL;
-    }
-    break;
+  buf = (struct v4l2_buffer){0};
+  buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  buf.memory = V4L2_MEMORY_MMAP;
+  if (-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_DQBUF, &buf)) {
+    fprintf(stderr, "ERROR: VIDIOC_DQBUF");
+    return NULL;
   }
 
   if(buf.index > ctx->bufcnt)
@@ -283,8 +267,8 @@ uint8_t * v4l2cap_next(V4L2Cap *ctx, int *l, int *w, int *h, int *fmt) {
 
   // Format: YUYV422, MJPEG, etc
   // See V4L2 documentation for values
-  if (fmt)
-    *fmt = vfmt.fmt.pix.pixelformat;
+  if (ffmt)
+    *ffmt = vfmt.fmt.pix.pixelformat;
 
   return ctx->fbuf[buf.index];
 }
@@ -294,7 +278,6 @@ int v4l2cap_done(V4L2Cap *ctx, uint8_t *frame) {
   struct v4l2_buffer buf;
   uint32_t ii;
   int      indx = -1;
-
 
   // find the buffer's index
   for (ii = 0 ; ii < ctx->bufcnt; ii++) {

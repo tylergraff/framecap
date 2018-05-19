@@ -37,9 +37,8 @@
 #include "../common/v4l2cap.h"
 
 
-void usage()
-{
-  fprintf(stderr, ""
+static void usage(void) {
+  fprintf(stderr,
 "v4l2cat: Read one or more frames from one or more v4l2 devices and write    \n"
 "the raw frame data to stdout                                                \n"
 "                                                                            \n"
@@ -49,19 +48,19 @@ void usage()
 "  frame data to stdout. If more than 1 device is specified, frames are      \n"
 "  read from each device sequentually.                                       \n"
 "                                                                            \n"
-"  Default options are: -c -1 -n 0                                           \n"
+"  Default options are: -t 0 -d 0 -e 1                                       \n"
 "                                                                            \n"
 "Option:          Description:                                               \n"
 "                                                                            \n"
 "  -t [int]       Output [t] Total frames and then exit.                     \n"
-"                 -1 outputs forever                                         \n"
+"                 0 outputs forever                                          \n"
 "                                                                            \n"
 "  -d [int]       After a frame is captured on a device, Discard the next [d]\n"
 "                 frames from that device.                                   \n"
 "                                                                            \n"
 "  -e [int]       Capture [e] frames from Each device before moving to the   \n"
 "                 next device.                                               \n"
-"                                                                            \n"
+"                                                                            \n");
 }
 
 
@@ -71,7 +70,7 @@ void usage()
 
 
 
-
+#if(0)
 // Callback for LibFrameCap, processes frames & saves them according to
 // command line options
 static int
@@ -214,23 +213,23 @@ on_frame(void* ctx, unsigned char* frame, int len, int w, int h, int fmt)
 }
 
 
+#endif
 
 static void bail(const char *msg) {
-  fprintf(stderr, "%s\n\n", msg);
+  fprintf(stderr, "\nERROR: %s\n\n", msg);
   usage();
   exit(EXIT_FAILURE);
 }
 
 int main(int argc, char **argv)
 {
-  V4L2Cap  *ctx = NULL;
+  V4L2Cap  **ctx = NULL;
+  int       opt;
   uint8_t  *frame;
-  int       len;
-
-  int       devcnt, opt, ii, r;
-  int       total   = -1;
-  int       each    = 1;
-  int       discard = 0;
+  uint32_t  len, devcnt;
+  uint64_t  ii, total   = -1;
+  uint64_t  jj, each    = 1;
+  uint64_t  kk, discard = 0;
 
   opterr = 0;
 
@@ -241,23 +240,21 @@ int main(int argc, char **argv)
 
     // Total number of frames to capture
     case 't':
-      total = atoi(optarg);
-      if(total < -2)
-        bail("t < -2");
+      total = strtoul(optarg, NULL, 0);
+      if (total < 0)
+        total = -1;
       break;
 
-    // Discard n frames after each captured frame
+    // Discard d frames after each captured frame
     case 'd':
-      discard = atoi(optarg);
-      if(discard < 0)
-        bail("d < 0");
+      discard = strtoul(optarg, NULL, 0);
       break;
 
-    // Capture n frames per device before moving to next device
+    // Capture e frames per device before moving to next device
     case 'e':
-      each = atoi(optarg);
-      if(each < 0)
-        bail("e < 0");
+      each = strtoul(optarg, NULL, 0);
+      if (each < 0)
+        bail("-e must be greater than 0");
       break;
 
     default:
@@ -280,15 +277,28 @@ int main(int argc, char **argv)
     }
   }
 
-  // Get the next captured frame and its meta-data.
-  frame = v4l2cap_next(ctx[0], &len, NULL, NULL, NULL);
+  // Capture <total> frames
+  for (ii = 0; ii < total; ii++) {
 
-  // Write it to STDOUT
-  write(stdout, frame, len);
+    // Capture <each> frames on a device
+    for (jj = 0; jj < each; jj++) {
 
-  // Tell the kernel we're done with this frame
-  v4l2cap_done(ctx[0], frame);
+      // throw away <discard> frames before capturing one
+      for (kk = 0; kk < discard; kk++)
+        v4l2cap_done(ctx[ii % devcnt],
+                     v4l2cap_next(ctx[ii % devcnt], &len, NULL, NULL, NULL));
 
+      frame = v4l2cap_next(ctx[ii % devcnt], &len, NULL, NULL, NULL);
+
+      if (frame)
+        printf("len: %d\n", len);
+
+      // Write it to STDOUT
+      //write(1, frame, len);
+
+      v4l2cap_done(ctx[ii % devcnt], frame);
+    }
+  }
 
   // Close all devices
   for (ii = 0; ii < devcnt; ii++)
