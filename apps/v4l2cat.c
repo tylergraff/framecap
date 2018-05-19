@@ -34,7 +34,7 @@
 #include <getopt.h>
 #include <sys/stat.h>
 
-#include "lib/libframecap.h"
+#include "../common/v4l2cap.h"
 
 
 void usage()
@@ -49,18 +49,28 @@ void usage()
 "  frame data to stdout. If more than 1 device is specified, frames are      \n"
 "  read from each device sequentually.                                       \n"
 "                                                                            \n"
-"  Default options are: -c 0 -n 1                                            \n"
+"  Default options are: -c -1 -n 0                                           \n"
 "                                                                            \n"
 "Option:          Description:                                               \n"
-"  -c [n]         Output [n] total frames and then exit.                     \n"
-"                 Use -c 0 to output forever                                 \n"
 "                                                                            \n"
-"  -n [n]         Sub-sample by capturing only 1 of every [n] frames provided\n"
-"                 by each v4l2 device. Use n=1 to output every frame.        \n"
+"  -t [int]       Output [t] Total frames and then exit.                     \n"
+"                 -1 outputs forever                                         \n"
 "                                                                            \n"
-"Copyright 2017 Tyler Graff                                                  \n"
-"tyler@graff.com                                                           \n");
+"  -d [int]       After a frame is captured on a device, Discard the next [d]\n"
+"                 frames from that device.                                   \n"
+"                                                                            \n"
+"  -e [int]       Capture [e] frames from Each device before moving to the   \n"
+"                 next device.                                               \n"
+"                                                                            \n"
 }
+
+
+
+
+
+
+
+
 
 // Callback for LibFrameCap, processes frames & saves them according to
 // command line options
@@ -204,123 +214,86 @@ on_frame(void* ctx, unsigned char* frame, int len, int w, int h, int fmt)
 }
 
 
+
+static void bail(const char *msg) {
+  fprintf(stderr, "%s\n\n", msg);
+  usage();
+  exit(EXIT_FAILURE);
+}
+
 int main(int argc, char **argv)
 {
-  FrameCap  framecap;
-  int       opt, r;
+  V4L2Cap  *ctx = NULL;
+  uint8_t  *frame;
+  int       len;
+
+  int       devcnt, opt, ii, r;
+  int       total   = -1;
+  int       each    = 1;
+  int       discard = 0;
 
   opterr = 0;
-  memset(&framecap, 0, sizeof(framecap));
-
-  // Command-line defaults
-  framecap.banner  = NULL;
-  framecap.seqfile = NULL;
-  framecap.outfile = NULL;
-
-  framecap.subsamp = 1; // sub-sampling modulus
-  framecap.count   = 0; // number of frames to capture, 0 for forever
-  framecap.jpeg    = 0; // default to RAW format
-  framecap.tstamp  = 0;
-  framecap.stdoutp = 0;
-  framecap.rate_ms = 0;
-
-  // Internal state
-  framecap.framecount = 0;
 
   // Parse command-line options
-  while((opt = getopt(argc, argv, "b:c:f:j:m:n:or:s:t")) != -1)
+  while((opt = getopt(argc, argv, "t:d:e:")) != -1)
   {
     switch (opt) {
 
-    // Print a custom banner at top-left of frame
-    case 'b':
-      framecap.banner = optarg;
-      break;
-
-    // Number of frames to capture
-    case 'c':
-      framecap.count = atoi(optarg);
-      if(framecap.count < 0)
-        framecap.count = 0;
-      break;
-
-    // Write frames to output file
-    case 'f':
-      framecap.outfile = optarg;
-      break;
-
-    // Compress YUYV frame to jpeg
-    case 'j':
-      framecap.jpeg = atoi(optarg);
-      if(framecap.jpeg < 0)
-        framecap.jpeg = 1;
-      if(framecap.jpeg > 3)
-        framecap.jpeg = 3;
-      break;
-
-    // Capture only one every <n> frames
-    case 'n':
-      framecap.subsamp = atoi(optarg);
-      if(framecap.subsamp < 1)
-        framecap.subsamp = 1;
-      break;
-
-    // Output raw frame (plus optional banner and timestamp) to STDOUT
-    case 'o':
-      framecap.stdoutp = 1;
-      break;
-
-    // Write frames to a sequence of files like: %zu-<name>
-    case 's':
-      framecap.seqfile = optarg;
-      break;
-
-    // Frame period in milliseconds
-    case 'r':
-      framecap.rate_ms = atoi(optarg);
-      if(framecap.rate_ms < 0)
-        framecap.rate_ms = 0;
-
-    // Print timestamp at top-left of frame
+    // Total number of frames to capture
     case 't':
-      framecap.tstamp = 1;
+      total = atoi(optarg);
+      if(total < -2)
+        bail("t < -2");
+      break;
+
+    // Discard n frames after each captured frame
+    case 'd':
+      discard = atoi(optarg);
+      if(discard < 0)
+        bail("d < 0");
+      break;
+
+    // Capture n frames per device before moving to next device
+    case 'e':
+      each = atoi(optarg);
+      if(each < 0)
+        bail("e < 0");
       break;
 
     default:
-      usage();
-      abort();
-      exit(-1);
+      bail("");
     }
   }
 
-  if(argc - optind == 1)
-    framecap.v4l2    = argv[argc - 1];
-  else
-  {
-    usage();
-    exit(-1);
+  devcnt = argc - optind;
+  if(devcnt < 1)
+    bail("No Devices Specified");
+
+  // Open all devices
+  ctx = malloc(devcnt * sizeof(ctx));
+  for (ii = 0; ii < devcnt; ii++) {
+    ctx[ii] = v4l2cap_new(argv[optind + ii], 2);
+    if (!ctx[ii]) {
+      fprintf(stderr, "Error opening: %s\n", argv[optind + ii]);
+      free(ctx);
+      exit(EXIT_FAILURE);
+    }
   }
 
-  if(framecap.outfile && 235 < strlen(framecap.outfile))
-  {
-    fprintf(stderr, "Error: filename too long: %s\n", framecap.outfile);
-    return -1;
-  }
+  // Get the next captured frame and its meta-data.
+  frame = v4l2cap_next(ctx[0], &len, NULL, NULL, NULL);
 
-  if(framecap.seqfile && 235 < strlen(framecap.seqfile))
-  {
-    fprintf(stderr, "Error: filename too long: %s\n", framecap.seqfile);
-    return -1;
-  }
+  // Write it to STDOUT
+  write(stdout, frame, len);
 
-  // set initial timestamp before capture starts
-  clock_gettime(CLOCK_MONOTONIC_RAW, &framecap.start_time);
+  // Tell the kernel we're done with this frame
+  v4l2cap_done(ctx[0], frame);
 
-  // Enter frame capture loop here
-  r = lfc_capture(framecap.v4l2, &framecap, on_frame);
-  if(r < 0)
-    fprintf(stderr, "Errors occurred during capture loop!\n");
 
-  fprintf(stderr, "\n");
-  return r;
+  // Close all devices
+  for (ii = 0; ii < devcnt; ii++)
+    v4l2cap_free(ctx[ii]);
+
+  free(ctx);
+  return 0;
 }
