@@ -1,7 +1,10 @@
+#ifndef _V4L2CAP_UTIL_H
+#define _V4L2CAP_UTIL_H
+
 // ---------------------------------------------------------------------------
-// tg_yuyv.h
+// v4l2cap_util.h
 // Author: Tyler Graff, 2017
-// tyler@graff.com
+// tagraff@gmail.com
 //
 // Some useful image format manipulation routines I wrote.
 // ---------------------------------------------------------------------------
@@ -28,115 +31,47 @@
 // SOFTWARE.
 //
 // ----------------------------------------------------------------------------
-// Public API:
 
-// Converts YUYV422-format image <yuyv> of total element count (W x H) <npix>
-// into RGB24 image at user-allocated space in <rgb>.
-// Note that you must allocate 3*npix bytes at <rgb> before calling.
-static void yuyv_to_rgb(unsigned char* rgb,
-                        unsigned char* yuyv,
-                        int            npix);
+#include <stdint.h>
+
+// Writes file <fname> _atomically_ such that another process reading the file
+// will only ever read the file's complete old contents, or its complet new
+// contents.
+ssize_t file_write_atomic(char *fname, uint8_t *data, size_t len);
+
+// Converts YUYV422 image <yuyv> of total pixel-count <npix> into RGB24 format
+// in caller-allocated buffer <rgb> of length npix*3 bytes.
+void yuyv422_to_rgb24(uint8_t *rgb, uint8_t *yuyv, uint32_t npix);
+
+// Returns a JPEG-file of quality <qul> from YUYV422 image <yuyv>.
+// Caller must free() the returned buffer. Length is returned in *len
+uint8_t * yuyv422_to_jpeg(uint8_t *yuyv, uint32_t w, uint32_t h,
+                          uint8_t qual, size_t *len);
+
+// Returns a JPEG-file of quality <qul> from RGB24 image <rgb>.
+// Caller must free() the returned buffer. Length is returned in *len
+uint8_t * rgb24_to_jpeg(uint8_t *rgb, uint32_t w, uint32_t h,
+                        uint8_t qual, size_t *len);
 
 // Prints string <str> at location <str_x>,<str_y> on image <yuyv>
 // having resolution <yuyv_w> x <yuyv_h> pixels
-static void tg_yuyv_putstr(unsigned char* yuyv,
-                           unsigned int   yuyv_w,
-                           unsigned int   yuyv_h,
-                           char*          str,
-                           unsigned int   str_x,
-                           unsigned int   str_y);
+// Character pixel width and height
+void yuyv_putstr(char      *str,
+                 uint32_t   str_x,
+                 uint32_t   str_y,
+                 uint8_t   *yuyv,
+                 uint32_t   yuyv_w,
+                 uint32_t   yuyv_h);
 
 // Foreground and background Y/CrCb values
-#define TG_YUYV_TEXT_Y    (0xFF)
-#define TG_YUYV_TEXT_CRCB (0x7F)
-#define TG_YUYV_BACK_Y    (0x00)
-#define TG_YUYV_BACK_CRCB (0x7F)
+#define YUYV_TEXT_Y    (0xFF)
+#define YUYV_TEXT_CRCB (0x7F)
+#define YUYV_BACK_Y    (0x00)
+#define YUYV_BACK_CRCB (0x7F)
 
-// ----------------------------------------------------------------------------
-static unsigned char int_ycr_to_r(unsigned char y, unsigned char cr)
-{
-  int _y = y;
-  int _cr = cr - 128;
-  int r;
-
-  // 1.403 ~= 45/32
-  r = (_y<<5) + 45*_cr;
-  if(r <= 0)
-    r = 0;
-  else if(r >= 32*255)
-    r = 255;
-  else
-    r = r >> 5; // divide-by-32
-
-  return (unsigned char)r;
-}
-
-static unsigned char int_ycrcb_to_g(unsigned char y, unsigned char cr, unsigned char cb)
-{
-  int _y = y;
-  int _cr = cr - 128;
-  int _cb = cb - 128;
-  int g;
-
-  // 0.7169 ~= 23/32
-  // 0.3455 ~= 11/32
-  g = (_y<<5) - 11*_cb - 23*_cr;
-  if(g <= 0)
-    g = 0;
-  else if(g >= 32*255)
-    g = 255;
-  else
-    g = g >> 5;
-
-  return (unsigned char)g;
-}
-
-static unsigned char int_ycb_to_b(unsigned char y, unsigned char cb)
-{
-  int _y = y;
-  int _cb = cb - 128;
-  int b;
-
-  // 1.7790 ~= 57/32
-  b = (_y<<5) + 57*_cb;
-  if(b <= 0)
-    b = 0;
-  else if(b >= 32*255)
-    b = 255;
-  else
-    b = b >> 5; // divide-by-32
-
-  return (unsigned char)b;
-}
-
-// Convert YUYV422 to RGB:
-static void yuyv_to_rgb(unsigned char* rgb, unsigned char* yuyv, int npix)
-{
-  int y, cr, cb, ii, jj;
-
-  for (ii = 0, jj = 0; ii < npix*3; ii+=6, jj+=4)
-  {
-    // first pixel uses 1st Y value
-    y  = yuyv[jj+0];
-    cb = yuyv[jj+1];
-    cr = yuyv[jj+3];
-
-    rgb[ii+0] = int_ycr_to_r(y, cr);
-    rgb[ii+1] = int_ycrcb_to_g(y, cr, cb);
-    rgb[ii+2] = int_ycb_to_b(y, cb);
-
-    // second pixel uses 2nd Y value
-    y  = yuyv[jj+2];
-
-    rgb[ii+3] = int_ycr_to_r(y, cr);
-    rgb[ii+4] = int_ycrcb_to_g(y, cr, cb);
-    rgb[ii+5] = int_ycb_to_b(y, cb);
-  }
-}
-
-#define TG_CHR_W (8) // character pixel width
-#define TG_CHR_H (8) // character pixel height
-const char tg_font[128][TG_CHR_H] = {
+#define CHR_W (8) // character pixel width
+#define CHR_H (8) // character pixel height
+static const char font[128][CHR_H] = {
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},  // 0x00
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},  // 0x01
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},  // 0x02
@@ -267,35 +202,11 @@ const char tg_font[128][TG_CHR_H] = {
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}   // 0x7F
 };
 
-static void tg_yuyv_putstr(unsigned char* yuyv,
-                           unsigned int   yuyv_w,
-                           unsigned int   yuyv_h,
-                           char*          str,
-                           unsigned int   str_x,
-                           unsigned int   str_y)
-{
-  int xx, yy, len;
 
-  len = strlen(str);
 
-  for(yy = 0; yy < TG_CHR_W; yy++)
-  {
-    if(yy + str_y > yuyv_h - 1)
-      break;
-    for(xx = 0; xx < len*TG_CHR_W; xx++)
-    {
-      if(xx + str_x > yuyv_w -1)
-        break;
-      if(tg_font[(unsigned char)str[xx/TG_CHR_W]][yy] & (1<<(xx%TG_CHR_W)))
-      {
-        yuyv[2*(yy+str_y)*yuyv_w + 2*(xx+str_x)]     = TG_YUYV_TEXT_Y;
-        yuyv[2*(yy+str_y)*yuyv_w + 2*(xx+str_x) + 1] = TG_YUYV_TEXT_CRCB;
-      }
-      else
-      {
-        yuyv[2*(yy+str_y)*yuyv_w + 2*(xx+str_x)]     = TG_YUYV_BACK_Y;
-        yuyv[2*(yy+str_y)*yuyv_w + 2*(xx+str_x) + 1] = TG_YUYV_BACK_CRCB;
-      }
-    }
-  }
-}
+
+
+
+
+
+#endif
