@@ -14,7 +14,7 @@ GCDA = $(APPS:=.gcda)
 
 all: $(APPS)
 
-v4l2cat: vcat.c
+vcat: vcat.c
 	$(CC) $(CFLAGS) -o vcat vcat.c $(EXTOBJS) $(LIBS)
 
 yuyv-util: yuyv-util.c
