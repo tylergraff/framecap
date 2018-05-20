@@ -7,15 +7,15 @@ LIBS += -lm
 CC = gcc
 
 EXTOBJS = ../common/*.o
-APPS = v4l2cat yuyv-util
+APPS = vcat yuyv-util
 
 GCNO = $(APPS:=.gcno)
 GCDA = $(APPS:=.gcda)
 
 all: $(APPS)
 
-v4l2cat: v4l2cat.c
-	$(CC) $(CFLAGS) -o v4l2cat v4l2cat.c $(EXTOBJS) $(LIBS)
+v4l2cat: vcat.c
+	$(CC) $(CFLAGS) -o vcat vcat.c $(EXTOBJS) $(LIBS)
 
 yuyv-util: yuyv-util.c
 	$(CC) $(CFLAGS) -o yuyv-util yuyv-util.c $(EXTOBJS) $(LIBS)

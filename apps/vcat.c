@@ -1,4 +1,4 @@
-// v4l2cat
+// vcat
 // Reads one or more frames from one or more v4l2 devices and writes them to
 // stdout
 //
@@ -37,11 +37,11 @@
 
 static void usage(void) {
   fprintf(stderr,
-"v4l2cat: Read one or more frames from one or more v4l2 devices and write    \n"
+"vcat: Read one or more frames from one or more v4l2 devices and write       \n"
 "the raw frame data to stdout                                                \n"
 "                                                                            \n"
 "Usage:                                                                      \n"
-" v4l2cat [opts] <device1> [<device2> ...]                                   \n"
+" vcat [opts] <device1> [<device2> ...]                                      \n"
 "  Capture one or more frames from v4l2 device(s) <device> and write the raw \n"
 "  frame data to stdout. If more than 1 device is specified, frames are      \n"
 "  read from each device sequentually.                                       \n"
