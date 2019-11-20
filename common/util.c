@@ -34,11 +34,172 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #include "util.h"
 
 #define TJE_IMPLEMENTATION
 #include "tiny_jpeg.h"
+
+#define CR_SAT_U (0x80 + 8)
+#define CR_SAT_L (0x80 - 8)
+#define CB_SAT_U (0x80 + 8)
+#define CB_SAT_L (0x80 - 8)
+
+#define IMGBLK_SIDE (80) // 80 px on a side
+#define IMGBLK_AREA (IMGBLK_SIDE * IMGBLK_SIDE)
+uint8_t * yuyv2imgblk(const uint8_t *yuyv, uint32_t xres, uint32_t yres) {
+  uint32_t  idx, bx, by, xx, yy, npix, len;
+  uint8_t  *blk, *blk_y0, *blk_y1, *blk_cb, *blk_cr, y0, y1, cr, cb;
+
+  npix   = xres*yres;
+  len    = npix*2;
+
+  blk    = malloc(len);
+  blk_y0 = blk + 0;
+  blk_y1 = blk + 1;
+  blk_cb = blk + len/2;
+  blk_cr = blk + len/2 + len/4;
+
+  idx = 0;
+  for (by = 0; idx < len/4; by += IMGBLK_SIDE*xres/2) {
+    for (bx = 0; bx < xres/2; bx += IMGBLK_SIDE) {
+      for (yy = 0; yy < IMGBLK_SIDE*xres/2; yy += xres/2) {
+        for (xx = 0; xx < IMGBLK_SIDE; xx++) {
+
+          y0 = yuyv[4*(by + bx + yy + xx)+0];
+          cb = yuyv[4*(by + bx + yy + xx)+1];
+          y1 = yuyv[4*(by + bx + yy + xx)+2];
+          cr = yuyv[4*(by + bx + yy + xx)+3];
+
+/*
+          if (cr < 125 && cr >= 120) { cr = 122; }
+          if (cr < 120 && cr >= 116) { cr = 118; }
+          if (cr < 116 && cr >= 110) { cr = 113; }
+          if (cr < 110 && cr >= 100) { cr = 105; }
+          if (cr < 100) { cr = 95; }
+
+          if (cr > 131 && cr <= 136) { cr = 134; }
+          if (cr > 136 && cr <= 140) { cr = 138; }
+          if (cr > 140 && cr <= 150) { cr = 145; }
+          if (cr > 150 && cr <= 160) { cr = 155; }
+          if (cr > 160) { cr = 165; }
+
+          if (cb < 125 && cb >= 120) { cb = 122; }
+          if (cb < 120 && cb >= 116) { cb = 118; }
+          if (cb < 116 && cb >= 110) { cb = 113; }
+          if (cb < 110 && cb >= 100) { cb = 105; }
+          if (cb < 100) { cb = 95; }
+
+          if (cb > 131 && cb <= 136) { cb = 134; }
+          if (cb > 136 && cb <= 140) { cb = 138; }
+          if (cb > 140 && cb <= 150) { cb = 145; }
+          if (cb > 150 && cb <= 160) { cb = 155; }
+          if (cb > 160) { cb = 165; }
+          cb = cb > CR_SAT_L && cb < CR_SAT_U ? cb &= 0xFC : cb & 0xF0;
+          cr = cr > CR_SAT_L && cr < CR_SAT_U ? cr &= 0xFC : cr & 0xF0;
+*/
+
+          if      (abs(0x80 - y0) > 0x20) { y0 = (y0 & 0xF8); }
+          else if (abs(0x80 - y0) > 0x10) { y0 = (y0 & 0xFC); }
+
+          if      (abs(0x80 - y1) > 0x20) { y1 = (y1 & 0xF8); }
+          else if (abs(0x80 - y1) > 0x10) { y1 = (y1 & 0xFC); }
+
+          if      (abs(0x80 - cr) > 0x10) { cr = (cr & 0xF8); }
+          else if (abs(0x80 - cr) > 0x08) { cr = (cr & 0xFC); }
+
+          if      (abs(0x80 - cb) > 0x10) { cb = (cb & 0xF8); }
+          else if (abs(0x80 - cb) > 0x08) { cb = (cb & 0xFC); }
+
+
+          blk_y0[2*idx] = y0;
+          blk_cb[idx]   = cb;
+          blk_y1[2*idx] = y1;
+          blk_cr[idx]   = cr;
+          idx++;
+        }
+      }
+    }
+  }
+  return blk;
+}
+
+uint8_t * imgblk2yuyv(const uint8_t *blk, uint32_t xres, uint32_t yres) {
+  uint32_t       idx, bx, by, xx, yy, npix, len;
+  uint8_t       *yuyv;
+  const uint8_t *blk_y0, *blk_y1, *blk_cb, *blk_cr;
+
+  npix   = xres*yres;
+  len    = npix*2;
+
+  blk_y0 = blk + 0;
+  blk_y1 = blk + 1;
+  blk_cb = blk + len/2;
+  blk_cr = blk + len/2 + len/4;
+  yuyv   = malloc(len);
+
+  idx = 0;
+  for (by = 0; idx < len/4; by += IMGBLK_SIDE*xres/2) {
+    for (bx = 0; bx < xres/2; bx += IMGBLK_SIDE) {
+      for (yy = 0; yy < IMGBLK_SIDE*xres/2; yy += xres/2) {
+        for (xx = 0; xx < IMGBLK_SIDE; xx++) {
+          yuyv[4*(by + bx + yy + xx)+0] = blk_y0[2*idx];
+          yuyv[4*(by + bx + yy + xx)+1] = blk_cb[idx];
+          yuyv[4*(by + bx + yy + xx)+2] = blk_y1[2*idx];
+          yuyv[4*(by + bx + yy + xx)+3] = blk_cr[idx];
+          idx++;
+        }
+      }
+    }
+  }
+  return yuyv;
+}
+
+
+uint8_t * file_read(const char *fname, size_t *fsize) {
+  ssize_t  rc;
+  size_t   blen, ofst;
+  uint8_t *buf;
+  int      fd, err = 0;
+
+  fd = open(fname, O_RDONLY);
+  if (0 > fd) { return NULL; }
+
+  // read up to 1 page first
+  blen = getpagesize();
+  buf  = NULL;
+  ofst = 0;
+  rc   = 1;
+
+  // read() returns bytes read, 0 on EOF, or -1 on error
+  while (rc) {
+    buf = realloc(buf, blen);
+    rc  = read(fd, buf + ofst, blen - ofst);
+    if (0 <= rc) {
+      ofst += rc;
+      // double the buffer if half or more full
+      blen *= (blen/(1+ofst) <= 1) ? 2 : 1;
+    }
+    else if (EINTR != errno) { err = 1; break; }
+  }
+
+  close(fd);
+
+  // realloc down to actual bytes read or 1 if no bytes read
+  buf = realloc(buf, ofst > 0 ? ofst : 1);
+
+  // An error occurred
+  if (err) {
+    free(buf);
+    return NULL;
+  }
+
+  if (fsize) { *fsize = ofst; }
+
+  return buf;
+}
+
 
 static uint8_t ycr_to_r(uint8_t y, uint8_t cr)
 {

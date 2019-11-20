@@ -1,17 +1,30 @@
-PROJECTS = common apps
+.PHONY: target clean
 
-.PHONY: target clean $(PROJECTS)
+CSRCAPPS:=$(wildcard apps/*.c)
+APPS:=$(CSRCAPPS:.c=)
+
+CSRCCOMMON:=$(wildcard common/*.c)
+CHDRCOMMON:=$(wildcard common/*.h)
+
+OBJCOMMON:=$(CSRCCOMMON:.c=.o)
+LIBCOMMON:=common/libutil.a
+
+CHDRS:=$(CHDRCOMMON)
 
 CC = gcc
+LIBS += -lJudy -lpthread -lm -lz
 
-target: $(PROJECTS)
-common:
-	cd common && $(MAKE)
+target: $(APPS) $(LIBCOMMON)
 
-apps:
-	cd apps && $(MAKE)
+apps/%: apps/%.c $(OBJCOMMON)
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
+$(LIBCOMMON): $(OBJCOMMON)
+	ar r $@ $^
+
+%.o: %.c $(CHDRS)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	cd common && $(MAKE) clean
-	cd apps && $(MAKE) clean
+	rm -f $(LIBCOMMON) $(OBJCOMMON)
+	rm -f $(APPS)

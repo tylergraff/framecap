@@ -1,7 +1,3 @@
-// yuyv2jpeg
-// Reads one or more yuyv422-formatted frames from stdin and writes them to one
-// or more JPEG files
-//
 // MIT License
 // Copyright (c) Tyler Graff 2018
 // tagraff@gmail.com
@@ -64,7 +60,7 @@ int main(int argc, char **argv)
 {
   int       opt;
   uint8_t  *yuyv, *rgb, *imgblk, *jpeg;
-  uint32_t  npix, h = 720, w = 1280, q = 2;
+  uint32_t  npix, h = 720, w = 1280, q = 3;
   size_t    len;
 
   // Set stdin pipe size
@@ -98,47 +94,31 @@ int main(int argc, char **argv)
     }
   }
 
-  if ((argc - optind) < 1)
+  if ((argc - optind) != 1)
     bail("Must specify output file");
 
   npix = h*w;
+
+  // read an entire yuyv frame
+  yuyv = file_read("/dev/stdin", &len);
+  if (len != (2*npix))
+    bail("Incorrect input length");
 
   // RGB uses 3 bytes per pixel
   rgb = malloc(3*npix);
   if (!rgb)
     bail("Could not allocate memory!");
 
-  // Convert forever
-  for (;;) {
-
-    // read an entire yuyv frame
-    yuyv = file_read("/dev/stdin", &len);
-    if (len != (2*npix))
-      break;
-
-    // convert to ImgBlk
-    imgblk = yuyv2imgblk(yuyv, w, h);
-    free(yuyv);
-
-    file_write_atomic(argv[argc-1], imgblk, len);
-
-    // convert back to YUYV
-    yuyv = imgblk2yuyv(imgblk, w, h);
-    free(imgblk);
-
-    // Convert to RGB, then to JPEG
-    yuyv422_to_rgb24(rgb, yuyv, npix);
-    jpeg = rgb24_to_jpeg(rgb, w, h, q, &len);
-
-    // Write to disk
-    if (0 > file_write_atomic(argv[argc-2], jpeg, len))
-      fprintf(stderr, "Error writing to file: %s\n", argv[argc-1]);
-
-    free(jpeg);
-    free(yuyv);
-  }
-
+  // Convert to RGB, then to JPEG
+  yuyv422_to_rgb24(rgb, yuyv, npix);
   free(yuyv);
+  jpeg = rgb24_to_jpeg(rgb, w, h, q, &len);
   free(rgb);
+
+  // Write to disk
+  if (0 > file_write_atomic(argv[optind], jpeg, len))
+    fprintf(stderr, "Error writing to file: %s\n", argv[optind]);
+
+  free(jpeg);
   return 0;
 }

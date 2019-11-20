@@ -34,6 +34,19 @@
 
 #include <stdint.h>
 
+// Converts YUYV image of byte-length <len> to ImgBlk format.
+uint8_t * yuyv2imgblk(const uint8_t *yuyv, uint32_t xres, uint32_t yres);
+
+// Converts ImgBlk image of byte-length <len> to YUYV format.
+uint8_t * imgblk2yuyv(const uint8_t *blk, uint32_t xres, uint32_t yres);
+
+// Slurp an entire file, or the entire contents of a pipe until it is closed
+uint8_t * file_read(const char *fname, size_t *fsize);
+
+
+
+
+
 // Writes file <fname> _atomically_ such that another process reading the file
 // will only ever read the file's complete old contents, or its complet new
 // contents.

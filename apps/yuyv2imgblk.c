@@ -1,6 +1,4 @@
-// yuyv2jpeg
-// Reads one or more yuyv422-formatted frames from stdin and writes them to one
-// or more JPEG files
+// yuyv2imgblk
 //
 // MIT License
 // Copyright (c) Tyler Graff 2018
@@ -23,34 +21,22 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-#define _GNU_SOURCE
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <getopt.h>
-#include <sys/stat.h>
-
-#include "../common/v4l2cap.h"
 #include "../common/util.h"
 
 static void usage(void) {
   fprintf(stderr,
-"yuyv2jpeg: Read one or more YUYV422-formatted (2 bytes/pixel) frames from   \n"
-"stdin and write them atomically to the specified JPEG file.                 \n"
-"                                                                            \n"
 "Usage:                                                                      \n"
-" yuyv2jpeg -h <px_height> -w <px_width> <jpeg_file>                         \n"
+" yuyv2imgblk -h <px_height> -w <px_width> <imgblk_file>                     \n"
 "                                                                            \n"
 "Option:          Description:                                               \n"
-"                                                                            \n"
 "  -h [int]       Input image height in pixels                               \n"
-"                                                                            \n"
 "  -w [int]       Input image width in pixels                                \n"
-"                                                                            \n"
-"  -q [1,2,3]     JPEG Filesize (1-smallest, 3-largest)                      \n"
-"                                                                            \n"
 "                                                                            \n");
 }
 
@@ -63,16 +49,13 @@ static void bail(const char *msg) {
 int main(int argc, char **argv)
 {
   int       opt;
-  uint8_t  *yuyv, *rgb, *imgblk, *jpeg;
-  uint32_t  npix, h = 720, w = 1280, q = 2;
+  uint8_t  *yuyv, *imgblk;
+  uint32_t  npix, h = 720, w = 1280;
   size_t    len;
-
-  // Set stdin pipe size
-  fcntl(STDIN_FILENO, F_SETPIPE_SZ, 4194304);
 
   // Parse command-line options
   opterr = 0;
-  while((opt = getopt(argc, argv, "h:w:q:")) != -1) {
+  while((opt = getopt(argc, argv, "h:w:")) != -1) {
     switch (opt) {
 
     case 'h':
@@ -87,58 +70,26 @@ int main(int argc, char **argv)
         bail("-w must be greater than 0");
       break;
 
-    case 'q':
-      q = strtoul(optarg, NULL, 0);
-      if (q < 1 || q > 3)
-        bail("-q must be 1, 2, or 3");
-      break;
-
     default:
       bail("Unknown argument");
     }
   }
 
-  if ((argc - optind) < 1)
-    bail("Must specify output file");
+  if ((argc - optind) != 1)
+    bail("Must specify exactly one output file");
 
   npix = h*w;
 
-  // RGB uses 3 bytes per pixel
-  rgb = malloc(3*npix);
-  if (!rgb)
-    bail("Could not allocate memory!");
+  // read an entire yuyv frame
+  yuyv = file_read("/dev/stdin", &len);
+  if (len != (2*npix))
+      bail("Incorrect input length");
 
-  // Convert forever
-  for (;;) {
-
-    // read an entire yuyv frame
-    yuyv = file_read("/dev/stdin", &len);
-    if (len != (2*npix))
-      break;
-
-    // convert to ImgBlk
-    imgblk = yuyv2imgblk(yuyv, w, h);
-    free(yuyv);
-
-    file_write_atomic(argv[argc-1], imgblk, len);
-
-    // convert back to YUYV
-    yuyv = imgblk2yuyv(imgblk, w, h);
-    free(imgblk);
-
-    // Convert to RGB, then to JPEG
-    yuyv422_to_rgb24(rgb, yuyv, npix);
-    jpeg = rgb24_to_jpeg(rgb, w, h, q, &len);
-
-    // Write to disk
-    if (0 > file_write_atomic(argv[argc-2], jpeg, len))
-      fprintf(stderr, "Error writing to file: %s\n", argv[argc-1]);
-
-    free(jpeg);
-    free(yuyv);
-  }
-
+  // convert to ImgBlk
+  imgblk = yuyv2imgblk(yuyv, w, h);
   free(yuyv);
-  free(rgb);
+
+  file_write_atomic(argv[argc-1], imgblk, len);
+  free(imgblk);
   return 0;
 }
