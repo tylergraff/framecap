@@ -23,7 +23,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-#define _GNU_SOURCE
+//#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,8 +32,7 @@
 #include <getopt.h>
 #include <sys/stat.h>
 
-#include "../common/v4l2cap.h"
-#include "../common/util.h"
+#include "util.h"
 
 static void usage(void) {
   fprintf(stderr,

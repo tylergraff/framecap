@@ -19,17 +19,20 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-#define _GNU_SOURCE
+#ifndef _GNU_SOURCE
+  #define _GNU_SOURCE
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <stdint.h>
 #include <sys/stat.h>
 
-#include "../common/v4l2cap.h"
-#include "../common/util.h"
+//#include "framecap.h"
+#include "util.h"
 
 static void usage(void) {
   fprintf(stderr,
@@ -59,7 +62,7 @@ static void bail(const char *msg) {
 int main(int argc, char **argv)
 {
   int       opt;
-  uint8_t  *yuyv, *rgb, *imgblk, *jpeg;
+  uint8_t  *yuyv, *rgb, *jpeg;
   uint32_t  npix, h = 720, w = 1280, q = 3;
   size_t    len;
 

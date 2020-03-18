@@ -1,0 +1,10 @@
+*.a
+*.o
+*.d
+apps/histobytes
+apps/imgblk2jpg
+apps/vcat
+apps/yuyv-util
+apps/yuyv2imgblk
+apps/yuyv2jpg
+

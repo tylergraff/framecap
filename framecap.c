@@ -1,5 +1,5 @@
 // MIT License
-// Copyright (c) Tyler Graff 2017
+// Copyright (c) Tyler Graff 2017-2020
 // tagraff@gmail.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -33,9 +33,9 @@
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
 
-#include "v4l2cap.h"
+#include "framecap.h"
 
-struct V4L2Cap {
+struct Framecap {
   int       fd;         // Device handle
   uint32_t  bufcnt;     // # of buffers
   uint8_t **fbuf;       // frame buffers
@@ -43,7 +43,7 @@ struct V4L2Cap {
 
 
 // Wrap ioctl() to spin on EINTR
-static int v4l2cap_ioctl(int fd, int req, void* arg)
+static int eintr_ioctl(int fd, int req, void* arg)
 {
   struct timespec poll_time;
   int r;
@@ -61,7 +61,7 @@ static int v4l2cap_ioctl(int fd, int req, void* arg)
 
 // Create a new context to capture frames from <fname>.
 // Returns NULL on error.
-V4L2Cap * v4l2cap_new(const char *device, uint32_t bufcnt)
+Framecap * framecap_new(const char *device, uint32_t bufcnt)
 {
   struct v4l2_capability     cap;
   struct v4l2_cropcap        cropcap;
@@ -71,12 +71,12 @@ V4L2Cap * v4l2cap_new(const char *device, uint32_t bufcnt)
   struct v4l2_buffer         buf;
   enum   v4l2_buf_type       type;
   uint32_t  ii;
-  V4L2Cap  *ctx;
+  Framecap  *ctx;
 
-  ctx = malloc(sizeof(V4L2Cap));
+  ctx = malloc(sizeof(Framecap));
   if (!ctx)
     return NULL;
-  memset(ctx, 0, sizeof(V4L2Cap));
+  memset(ctx, 0, sizeof(Framecap));
   ctx->bufcnt = bufcnt;
   ctx->fbuf = malloc(sizeof(uint8_t*) * ctx->bufcnt);
 
@@ -85,7 +85,7 @@ V4L2Cap * v4l2cap_new(const char *device, uint32_t bufcnt)
     {fprintf(stderr, "ERROR: Cannot open device"); return NULL;}
 
   // Determine if fd is a V4L2 Device
-  if (0 != v4l2cap_ioctl(ctx->fd, VIDIOC_QUERYCAP, &cap))
+  if (0 != eintr_ioctl(ctx->fd, VIDIOC_QUERYCAP, &cap))
     {fprintf(stderr, "ERROR: Not v4l2 compatible"); return NULL;}
 
   if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
@@ -97,16 +97,16 @@ V4L2Cap * v4l2cap_new(const char *device, uint32_t bufcnt)
   // Set crop, ignore ioctl errors
   cropcap = (struct v4l2_cropcap){0};
   cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  v4l2cap_ioctl(ctx->fd, VIDIOC_CROPCAP, &cropcap);
+  eintr_ioctl(ctx->fd, VIDIOC_CROPCAP, &cropcap);
 
   crop.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   crop.c    = cropcap.defrect; // reset to default
-  v4l2cap_ioctl(ctx->fd, VIDIOC_S_CROP, &crop);
+  eintr_ioctl(ctx->fd, VIDIOC_S_CROP, &crop);
 
   // Preserve original settings as set by v4l2-ctl for example
   vfmt = (struct v4l2_format){0};
   vfmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_G_FMT, &vfmt))
+  if (-1 == eintr_ioctl(ctx->fd, VIDIOC_G_FMT, &vfmt))
    {fprintf(stderr, "ERROR: VIDIOC_G_FMT"); return NULL;}
 
 #if(0)
@@ -130,7 +130,7 @@ V4L2Cap * v4l2cap_new(const char *device, uint32_t bufcnt)
   req.count  = ctx->bufcnt;
   req.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   req.memory = V4L2_MEMORY_MMAP;
-  if(-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_REQBUFS, &req))
+  if(-1 == eintr_ioctl(ctx->fd, VIDIOC_REQBUFS, &req))
     {fprintf(stderr, "ERROR: Device does not support mmap"); return NULL;}
   if(req.count != ctx->bufcnt)
     {fprintf(stderr, "ERROR: Device buffer count mismatch"); return NULL;}
@@ -142,7 +142,7 @@ V4L2Cap * v4l2cap_new(const char *device, uint32_t bufcnt)
     buf.type    = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory  = V4L2_MEMORY_MMAP;
     buf.index   = ii;
-    if(-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_QUERYBUF, &buf))
+    if(-1 == eintr_ioctl(ctx->fd, VIDIOC_QUERYBUF, &buf))
       {fprintf(stderr, "ERROR: VIDIOC_QUERYBUF"); return NULL;}
 
     ctx->fbuf[ii] = mmap(NULL, buf.length,
@@ -156,13 +156,13 @@ V4L2Cap * v4l2cap_new(const char *device, uint32_t bufcnt)
     buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
     buf.index  = ii;
-    if (-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_QBUF, &buf))
+    if (-1 == eintr_ioctl(ctx->fd, VIDIOC_QBUF, &buf))
       {fprintf(stderr, "ERROR: VIDIOC_QBUF"); return NULL;}
   }
 
   // Start capturing
   type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_STREAMON, &type))
+  if (-1 == eintr_ioctl(ctx->fd, VIDIOC_STREAMON, &type))
     {fprintf(stderr, "ERROR: VIDIOC_STREAMON"); return NULL;}
 
   return ctx;
@@ -171,7 +171,7 @@ V4L2Cap * v4l2cap_new(const char *device, uint32_t bufcnt)
 
 // Free a context to capture frames from <fname>.
 // Returns NULL on error.
-int v4l2cap_free(V4L2Cap *ctx)
+int framecap_free(Framecap *ctx)
 {
   struct v4l2_buffer  buf;
   enum v4l2_buf_type  type;
@@ -179,7 +179,7 @@ int v4l2cap_free(V4L2Cap *ctx)
 
   // Stop capturing
   type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  v4l2cap_ioctl(ctx->fd, VIDIOC_STREAMOFF, &type);
+  eintr_ioctl(ctx->fd, VIDIOC_STREAMOFF, &type);
 
   // un-mmap() buffers
   for (ii = 0 ; ii < ctx->bufcnt; ii++)
@@ -188,7 +188,7 @@ int v4l2cap_free(V4L2Cap *ctx)
     buf.type    = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory  = V4L2_MEMORY_MMAP;
     buf.index   = ii;
-    if(-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_QUERYBUF, &buf))
+    if(-1 == eintr_ioctl(ctx->fd, VIDIOC_QUERYBUF, &buf))
       {fprintf(stderr, "ERROR: VIDIOC_QUERYBUF");}
 
     munmap(ctx->fbuf[buf.index], buf.length);
@@ -203,7 +203,7 @@ int v4l2cap_free(V4L2Cap *ctx)
 
 
 // Returns a pointer to a captured frame and its meta-data. NOT thread-safe.
-uint8_t * v4l2cap_next(V4L2Cap *ctx,
+uint8_t * framecap_next(Framecap *ctx,
                        uint32_t *l, uint32_t *w, uint32_t *h, uint32_t *ffmt) {
   struct v4l2_buffer buf;
   struct v4l2_format vfmt;
@@ -228,7 +228,7 @@ uint8_t * v4l2cap_next(V4L2Cap *ctx,
   // Preserve original settings as set by v4l2-ctl for example
   vfmt = (struct v4l2_format){0};
   vfmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_G_FMT, &vfmt))
+  if (-1 == eintr_ioctl(ctx->fd, VIDIOC_G_FMT, &vfmt))
     {fprintf(stderr, "ERROR: VIDIOC_G_FMT"); return NULL;}
 
 #if(0)
@@ -245,7 +245,7 @@ uint8_t * v4l2cap_next(V4L2Cap *ctx,
   buf = (struct v4l2_buffer){0};
   buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   buf.memory = V4L2_MEMORY_MMAP;
-  if (-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_DQBUF, &buf)) {
+  if (-1 == eintr_ioctl(ctx->fd, VIDIOC_DQBUF, &buf)) {
     fprintf(stderr, "ERROR: VIDIOC_DQBUF");
     return NULL;
   }
@@ -274,7 +274,7 @@ uint8_t * v4l2cap_next(V4L2Cap *ctx,
 }
 
 // It's OK to capture into this framebuffer now
-int v4l2cap_done(V4L2Cap *ctx, uint8_t *frame) {
+int framecap_done(Framecap *ctx, uint8_t *frame) {
   struct v4l2_buffer buf;
   uint32_t ii;
   int      indx = -1;
@@ -297,7 +297,7 @@ int v4l2cap_done(V4L2Cap *ctx, uint8_t *frame) {
   buf.index  = indx;
 
   // Tell kernel it's ok to overwrite this frame
-  if (-1 == v4l2cap_ioctl(ctx->fd, VIDIOC_QBUF, &buf))
+  if (-1 == eintr_ioctl(ctx->fd, VIDIOC_QBUF, &buf))
     {fprintf(stderr, "ERROR:  VIDIOC_QBUF"); return -1;}
 
   return 0;

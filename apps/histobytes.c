@@ -4,7 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <getopt.h>
-#include "../common/util.h"
+#include "util.h"
 
 int main(int argc, char **argv)
 {
@@ -26,7 +26,7 @@ int main(int argc, char **argv)
   max = max < 76 ? 76 : max;
 
   for (ii = 0; ii < 256; ii++) {
-    fprintf(stdout, "%2x|", ii);
+    fprintf(stdout, "%2lx|", ii);
     if (0 != histo[ii])
       fprintf(stdout, "#");
     for (len = 0; len < histo[ii]/(max/76); len++) {
@@ -35,4 +35,5 @@ int main(int argc, char **argv)
     fprintf(stdout, "\n");
   }
   return 0;
+  (void)argc; (void)argv;
 }

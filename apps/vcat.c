@@ -23,7 +23,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-#define _GNU_SOURCE
+//#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,7 +32,7 @@
 #include <getopt.h>
 #include <sys/stat.h>
 
-#include "../common/v4l2cap.h"
+#include "../framecap.h"
 
 
 static void usage(void) {
@@ -69,7 +69,7 @@ static void bail(const char *msg) {
 
 int main(int argc, char **argv)
 {
-  V4L2Cap  **ctx = NULL;
+  Framecap  **ctx = NULL;
   int       opt;
   uint8_t  *frame;
   uint32_t  len, devcnt;
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
   // Open all devices
   ctx = malloc(devcnt * sizeof(ctx));
   for (ii = 0; ii < devcnt; ii++) {
-    ctx[ii] = v4l2cap_new(argv[optind + ii], 2);
+    ctx[ii] = framecap_new(argv[optind + ii], 2);
     if (!ctx[ii]) {
       fprintf(stderr, "Error opening: %s\n", argv[optind + ii]);
       free(ctx);
@@ -134,22 +134,22 @@ int main(int argc, char **argv)
 
       // throw away <discard> frames before capturing one
       for (kk = 0; kk < discard; kk++)
-        v4l2cap_done(ctx[ii % devcnt],
-                     v4l2cap_next(ctx[ii % devcnt], &len, NULL, NULL, NULL));
+        framecap_done(ctx[ii % devcnt],
+                     framecap_next(ctx[ii % devcnt], &len, NULL, NULL, NULL));
 
-      frame = v4l2cap_next(ctx[ii % devcnt], &len, NULL, NULL, NULL);
+      frame = framecap_next(ctx[ii % devcnt], &len, NULL, NULL, NULL);
 
       // Write it to STDOUT
       if (frame)
         write(STDOUT_FILENO, frame, len);
 
-      v4l2cap_done(ctx[ii % devcnt], frame);
+      framecap_done(ctx[ii % devcnt], frame);
     }
   }
 
   // Close all devices
   for (ii = 0; ii < devcnt; ii++)
-    v4l2cap_free(ctx[ii]);
+    framecap_free(ctx[ii]);
 
   free(ctx);
   return 0;

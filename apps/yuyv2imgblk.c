@@ -27,7 +27,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <getopt.h>
-#include "../common/util.h"
+#include "util.h"
 
 static void usage(void) {
   fprintf(stderr,

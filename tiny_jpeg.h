@@ -486,7 +486,7 @@ static void tjei_write(TJEState* state, const void* data, size_t num_bytes, size
 
     // Recursively calling ourselves with the rest of the buffer.
     if (capped_count < to_write) {
-        tjei_write(state, (uint8_t*)data+capped_count, to_write - capped_count, 1);
+        tjei_write(state, (const uint8_t*)data+capped_count, to_write - capped_count, 1);
     }
 }
 
@@ -989,7 +989,7 @@ static int tjei_encode_main(TJEState* state,
 
         uint16_t jfif_len = sizeof(TJEJPEGHeader) - 4 /*SOI & APP0 markers*/;
         header.jfif_len = tjei_be_word(jfif_len);
-        memcpy(header.jfif_id, (void*)tjeik_jfif_id, 5);
+        memcpy(header.jfif_id, (const void*)tjeik_jfif_id, 5);
         header.version = tjei_be_word(0x0102);
         header.units = 0x01;  // Dots-per-inch
         header.x_density = tjei_be_word(0x0060);  // 96 DPI
@@ -1004,7 +1004,7 @@ static int tjei_encode_main(TJEState* state,
         // Comment
         com.com = tjei_be_word(0xfffe);
         com.com_len = tjei_be_word(com_len);
-        memcpy(com.com_str, (void*)tjeik_com_str, sizeof(tjeik_com_str)-1);
+        memcpy(com.com_str, (const void*)tjeik_com_str, sizeof(tjeik_com_str)-1);
         tjei_write(state, &com, sizeof(TJEJPEGComment), 1);
     }
 
